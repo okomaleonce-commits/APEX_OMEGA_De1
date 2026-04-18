@@ -4,8 +4,7 @@ Poisson implémenté en pur Python (math module) — sans scipy ni gfortran.
 Paramètres : avg=1.56 · HOME_ADV=1.08 · rho=0.06
 """
 import math
-import numpy as np
-from config.bundesliga_params import (
+from bundesliga.config_v2_3 import (
     LEAGUE_AVG_GOALS_PER_TEAM,
     HOME_ADV,
     DIXON_COLES_RHO,
