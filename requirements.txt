@@ -2,7 +2,7 @@
 # scipy supprimé — Poisson implémenté en pur Python (math module)
 fastapi==0.115.0
 uvicorn==0.30.6
-python-telegram-bot==21.5
+python-telegram-bot==22.7
 apscheduler==3.10.4
 requests==2.32.3
 numpy==2.1.0

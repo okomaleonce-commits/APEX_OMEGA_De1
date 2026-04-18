@@ -395,3 +395,56 @@ def _signal_won(market: str, hg: int, ag: int) -> bool:
     if market == "under_25": return t < 3
     if market == "btts_no":  return hg == 0 or ag == 0
     return False
+
+    # ═══════════════════════════════════════════════════════════
+    async def manual_scan(self, days_ahead: int = 3) -> None:
+        """
+        Scan déclenché manuellement via commande Telegram /scan.
+        Identique à daily_scan mais avec days_ahead paramétrable.
+        """
+        from ingestion.fixtures_service import get_upcoming_fixtures
+        logger.info(f"=== APEX Manual Scan ({days_ahead}j) ===")
+
+        raw      = get_upcoming_fixtures(days_ahead=days_ahead)
+        filtered = self.router.filter_batch(raw)
+
+        if not filtered:
+            from interfaces.telegram_bot import send_analysis
+            await send_analysis(
+                f"📭 *APEX Scan — {days_ahead}j*\n"
+                f"Aucun match Bundesliga trouvé dans cette fenêtre."
+            )
+            return
+
+        session = {
+            "total_exposure": 0.0, "total_signals": 0,
+            "family_over": 0.0, "family_under": 0.0, "family_1x2": 0.0,
+        }
+        all_signals = []
+        passes = 0
+
+        for raw_fx in filtered:
+            try:
+                sigs = await self._analyze(raw_fx, session)
+                if sigs:
+                    all_signals.extend(sigs)
+                else:
+                    passes += 1
+            except Exception as e:
+                logger.error(f"manual_scan error: {e}", exc_info=True)
+
+        if all_signals:
+            from decisions.rationale_builder import build_daily_summary
+            from interfaces.telegram_bot import send_analysis
+            md      = all_signals[0].get("matchday", "?")
+            summary = build_daily_summary(
+                matchday=md,
+                all_signals=all_signals,
+                total_exp=session["total_exposure"],
+            )
+            await send_analysis(summary)
+        else:
+            from interfaces.telegram_bot import send_no_bet_summary
+            await send_no_bet_summary(matchday="?", passes=passes)
+
+        logger.info(f"=== Manual Scan terminé : {len(all_signals)} signaux · {passes} NO BET ===")
