@@ -1,0 +1,49 @@
+# APEX_OMEGA_De1 · Render Deployment Config
+# Bundesliga-Only Bot — Persistent Disk
+
+services:
+  - type: worker
+    name: apex-omega-bundesliga
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHANNEL_ID
+        sync: false
+      - key: API_FOOTBALL_KEY
+        sync: false
+      - key: BETFAIR_APP_KEY
+        sync: false
+      - key: BETFAIR_SESSION_TOKEN
+        sync: false
+      - key: PINNACLE_API_KEY
+        sync: false
+      - key: FOOTYSTATS_KEY
+        sync: false
+      - key: DATA_DIR
+        value: /data
+      - key: SEASON
+        value: "2025"
+      - key: DEBUG
+        value: "false"
+    disk:
+      name: apex-bundesliga-data
+      mountPath: /data
+      sizeGB: 1
+
+# Cron Jobs dédiés Bundesliga
+# Note: Render supporte les crons sur les Web Services uniquement
+# Pour worker, utiliser APScheduler intégré dans main.py
+# Ces crons sont conservés pour référence / migration future
+#
+# crons:
+#   - name: apex-ingestion-bl
+#     schedule: "0 6 * * 2,5"     # Mardi + Vendredi 06h00 UTC
+#
+#   - name: apex-analyse-bl
+#     schedule: "30 9 * * 2,5"    # Mardi + Vendredi 09h30 UTC
+#
+#   - name: apex-audit-bl
+#     schedule: "0 23 * * 0"      # Dimanche 23h00 UTC
