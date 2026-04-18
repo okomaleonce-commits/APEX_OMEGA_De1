@@ -1,9 +1,9 @@
 """APEX_OMEGA_De1 · Lineups & Injuries"""
 import requests
-from config.settings import API_FOOTBALL_KEY
+from config.settings import API_KEY
 from bundesliga.config_v2_3 import AIS_F, AIS_F_DEFAULT
 
-HDR = {"x-apisports-key": API_FOOTBALL_KEY}
+HDR = {"x-apisports-key": API_KEY}
 BASE= "https://v3.football.api-sports.io"
 
 def get_injuries(team_id, fixture_id):

@@ -472,3 +472,7 @@ def gates_summary(ctx: GateContext) -> str:
         f"| Kelly ×{ctx.kelly_mult:.2f}"
     )
     return "\n".join(lines)
+
+
+# Alias pour compatibilité pipeline.py
+evaluate_all_gates = run_all_gates

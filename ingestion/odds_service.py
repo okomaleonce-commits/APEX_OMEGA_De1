@@ -188,3 +188,11 @@ def compute_edge(model_prob: float, fair_odd: float) -> float:
         return 0.0
     market_prob = 1 / fair_odd
     return round((model_prob - market_prob) / market_prob, 4)
+
+
+def build_fair_odds_dict(home_team: str, away_team: str) -> dict:
+    """
+    Wrapper pipeline-compatible : retourne le dict fair_odds pour un match.
+    Utilisé par pipeline.py directement.
+    """
+    return get_match_odds(home_team, away_team)

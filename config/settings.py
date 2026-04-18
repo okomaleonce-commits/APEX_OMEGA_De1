@@ -32,3 +32,7 @@ BUNDESLIGA_SEASON = int(os.getenv("SEASON", "2025"))
 # ── Runtime
 DEBUG            = os.getenv("DEBUG", "false").lower() == "true"
 DAILY_SCAN_HOUR  = int(os.getenv("DAILY_SCAN_HOUR", "7"))
+
+# ── Serveur
+PORT      = int(os.getenv("PORT", "10000"))
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()

@@ -402,3 +402,21 @@ LAMBDA = {
     "REBOUND_HOME":        0.10,
     "REBOUND_SERIE_NOIRE": 0.15,
 }
+
+
+# ── AIS-F par défaut (joueur absent sans profil explicite)
+AIS_F_DEFAULT = {
+    "ST":  {"att": -0.08, "def":  0.00},
+    "MF":  {"att": -0.05, "def": +0.02},
+    "DC":  {"att":  0.00, "def": +0.06},
+    "GK":  {"att":  0.00, "def": +0.10},
+    "WB":  {"att": -0.03, "def": +0.04},
+    "AI":  {"att": -0.06, "def":  0.00},
+}
+
+# ── AIS-F joueurs clés par club (extrait de CLUBS pour compatibilité import direct)
+AIS_F = {
+    club: data.get("ais_f", {})
+    for club, data in CLUBS.items()
+    if "ais_f" in data
+}
