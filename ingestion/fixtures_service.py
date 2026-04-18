@@ -14,10 +14,17 @@ HEADERS  = {"x-apisports-key": API_KEY}
 
 
 def get_upcoming_fixtures(days_ahead: int = 7) -> list[dict]:
-    """Matchs Bundesliga des N prochains jours (statut NS = Not Started)."""
-    today = datetime.utcnow().date()
+    """
+    Matchs Bundesliga des N prochains jours.
+    PAS de filtre status=NS — on filtre ensuite sur timestamp futur.
+    Raison : à 23h UTC, les matchs de demain (J+1) ont from=aujourd'hui
+    mais l'API les retourne seulement si on ne filtre pas sur NS strict.
+    """
+    now   = datetime.utcnow()
+    today = now.date()
     to    = today + timedelta(days=days_ahead)
-    resp  = requests.get(
+
+    resp = requests.get(
         f"{BASE_URL}/fixtures",
         headers=HEADERS,
         params={
@@ -25,14 +32,28 @@ def get_upcoming_fixtures(days_ahead: int = 7) -> list[dict]:
             "season":  BUNDESLIGA_SEASON,
             "from":    str(today),
             "to":      str(to),
-            "status":  "NS",
+            # Pas de filtre status — récupère NS + 1H (en cours) + FT
         },
         timeout=15,
     )
     resp.raise_for_status()
-    data = resp.json().get("response", [])
-    logger.info(f"API-Football: {len(data)} fixtures Bundesliga à venir")
-    return data
+    all_data = resp.json().get("response", [])
+
+    # Filtre : garder uniquement les matchs non encore commencés (timestamp futur)
+    now_ts = now.timestamp()
+    upcoming = []
+    for fx in all_data:
+        ko_ts = fx.get("fixture", {}).get("timestamp")
+        status = fx.get("fixture", {}).get("status", {}).get("short", "NS")
+        # Accepter NS ou matchs dont le KO est dans le futur
+        if status in ("NS", "TBD") or (ko_ts and ko_ts > now_ts):
+            upcoming.append(fx)
+
+    logger.info(
+        f"API-Football: {len(upcoming)}/{len(all_data)} fixtures BL à venir "
+        f"(filtre timestamp > {now.strftime('%H:%M')} UTC)"
+    )
+    return upcoming
 
 
 def get_team_form(team_id: int, last: int = 8) -> list[dict]:
