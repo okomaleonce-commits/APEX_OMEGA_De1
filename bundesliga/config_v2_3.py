@@ -521,3 +521,50 @@ API_NAME_MAP = {
 def normalize_club_name(api_name: str) -> str:
     """Convertit un nom API-Football vers la clé exacte dans CLUBS."""
     return API_NAME_MAP.get(api_name, api_name)
+
+
+# ── Mapping noms API-Football → clés CLUBS (normalisation)
+CLUB_NAME_ALIASES: dict[str, str] = {
+    # API envoie ces noms → notre clé CLUBS
+    "1899 Hoffenheim":          "Hoffenheim",
+    "TSG Hoffenheim":           "Hoffenheim",
+    "Union Berlin":             "1. FC Union Berlin",
+    "1. FC Union Berlin":       "1. FC Union Berlin",
+    "Hamburger SV":             "Hamburger SV",
+    "HSV":                      "Hamburger SV",
+    "Bayern München":           "Bayern Munich",
+    "FC Bayern München":        "Bayern Munich",
+    "Bayern Munich":            "Bayern Munich",
+    "Borussia Mönchengladbach": "Borussia M'gladbach",
+    "M'gladbach":               "Borussia M'gladbach",
+    "Gladbach":                 "Borussia M'gladbach",
+    "Eintracht Frankfurt":      "Eintracht Frankfurt",
+    "1. FC Köln":               "1. FC Köln",
+    "FC Köln":                  "1. FC Köln",
+    "Köln":                     "1. FC Köln",
+    "Werder Bremen":            "Werder Bremen",
+    "SV Werder Bremen":         "Werder Bremen",
+    "SC Freiburg":              "SC Freiburg",
+    "1. FC Heidenheim":         "1. FC Heidenheim",
+    "Heidenheim":               "1. FC Heidenheim",
+    "1. FSV Mainz 05":          "1. FSV Mainz 05",
+    "FSV Mainz 05":             "1. FSV Mainz 05",
+    "Mainz":                    "1. FSV Mainz 05",
+    "Mainz 05":                 "1. FSV Mainz 05",
+    "VfB Stuttgart":            "VfB Stuttgart",
+    "RB Leipzig":               "RB Leipzig",
+    "FC St. Pauli":             "FC St. Pauli",
+    "St. Pauli":                "FC St. Pauli",
+    "VfL Wolfsburg":            "VfL Wolfsburg",
+    "Wolfsburg":                "VfL Wolfsburg",
+    "FC Augsburg":              "FC Augsburg",
+    "Augsburg":                 "FC Augsburg",
+    "Bayer Leverkusen":         "Bayer Leverkusen",
+    "Leverkusen":               "Bayer Leverkusen",
+    "Borussia Dortmund":        "Borussia Dortmund",
+    "BVB":                      "Borussia Dortmund",
+}
+
+def normalize_club_name(api_name: str) -> str:
+    """Traduit un nom API-Football vers la clé CLUBS correspondante."""
+    return CLUB_NAME_ALIASES.get(api_name, api_name)
