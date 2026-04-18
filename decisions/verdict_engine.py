@@ -1,15 +1,16 @@
 """
-APEX_OMEGA_De1 · Verdict Engine — génération signaux v1.4
+APEX_OMEGA_De1 · Verdict Engine v2 — TOUJOURS un signal
+Philosophie : avec 40+ marchés disponibles, un edge positif existe toujours.
+Le bot émet TOUJOURS au moins 1 signal par match analysé.
+Signaux classés par GRADE (A > B > C > D) puis par edge décroissant.
 """
 from __future__ import annotations
 import logging
+from bundesliga.markets import MARKETS, GRADE_ORDER, GRADE_MAX_STAKE
 from bundesliga.config_v2_3 import (
-    EDGE_THRESHOLDS, OVER35_PRINCIPAL, CLUBS,
-    DCS_THRESHOLDS, VERDICTS,
-)
-from risk.stake_policy import (
-    compute_stake, apply_family_caps,
-    is_1x2_form_ok, determine_verdict,
+    KELLY_DIVISORS, FAMILY_CAPS,
+    SESSION_MAX_EXPOSURE, SESSION_MAX_EXPOSURE_SR,
+    SESSION_MAX_SIGNALS, CLUBS, VERDICTS,
 )
 from ingestion.odds_service import compute_edge
 
@@ -20,19 +21,16 @@ class VerdictEngine:
 
     def generate(
         self,
-        match:   dict,
-        probs:   dict,
-        dcs:     dict,
-        gates:   dict,
-        session: dict,
+        match:    dict,
+        all_probs: dict,   # sortie de compute_all_market_probs()
+        dcs:      dict,
+        gates:    dict,
+        session:  dict,
     ) -> list[dict]:
         """
-        Génère et classe les signaux APEX pour un match.
-        Retourne la liste triée (par edge) des signaux retenus après caps.
+        Évalue TOUS les marchés disponibles et retourne les signaux classés.
+        GARANTIE : retourne toujours ≥1 signal si DCS ≥ ACCEPTABLE.
         """
-        if dcs["tier"] == "INSUFFICIENT":
-            return []
-
         forbidden  = set(gates.get("forbidden_markets", []))
         kelly_mult = gates.get("kelly_mult", 1.0)
         flags      = gates.get("flags", {})
@@ -40,90 +38,194 @@ class VerdictEngine:
         home       = match["home_team"]
         away       = match["away_team"]
         hp, ap     = CLUBS.get(home, {}), CLUBS.get(away, {})
-        can_buts   = dcs["market_ok"]
+        is_promo   = hp.get("promoted") or ap.get("promoted")
+        dcs_tier   = dcs.get("tier", "INSUFFICIENT")
+        can_buts   = dcs.get("market_ok", False)
+
+        if dcs_tier == "INSUFFICIENT":
+            return []
 
         candidates = []
 
-        def try_signal(market, prob, odd_key, extra_check=True):
-            if market in forbidden:        return
-            if not extra_check:            return
-            if not can_buts and market not in ("1x2_fav", "1x2_out"): return
+        # ── Évaluation de chaque marché du catalogue
+        for market_key, market_cfg in MARKETS.items():
+            if market_key in forbidden:
+                continue
 
-            fair_odd = fair_odds.get(odd_key or market)
-            if not fair_odd or fair_odd <= 1.01: return
+            # Restrictions DCS : marchés buts Grade A requis DCS valid
+            grade = market_cfg["grade"]
+            if grade == "A" and market_key not in ("1x2_home","1x2_draw","1x2_away","dc_1x","dc_12","dc_x2") and not can_buts:
+                continue
 
-            edge_min = EDGE_THRESHOLDS.get(market, 0.05)
-            # Règle promu/Tier C
-            is_promo = hp.get("promoted") or ap.get("promoted")
-            if market in ("1x2_fav",) and is_promo:
-                edge_min = max(edge_min, EDGE_THRESHOLDS.get("1x2_promo", 0.18))
+            # Récupérer la proba modèle
+            model_prob = all_probs.get(market_key)
+            if model_prob is None or model_prob <= 0.01:
+                continue
 
-            edge = compute_edge(prob, fair_odd)
-            if edge < edge_min: return
+            # Récupérer la cote fair (du marché ou estimée)
+            fair_odd = self._get_fair_odd(market_key, fair_odds, model_prob)
+            if fair_odd is None or fair_odd <= 1.01:
+                continue
 
-            verdict  = determine_verdict(edge, dcs["tier"], flags)
-            if verdict == "NO_BET": return
+            # Calcul edge
+            edge = compute_edge(model_prob, fair_odd)
 
-            stake = compute_stake(market, edge, kelly_mult, verdict, fair_odd)
+            # Seuil edge minimal par marché
+            edge_min = market_cfg["edge_min"]
+            if is_promo and market_key in ("1x2_home", "1x2_away"):
+                edge_min = max(edge_min, 0.18)
+
+            if edge < edge_min:
+                continue
+
+            # Verdict et mise
+            verdict = _determine_verdict(edge, dcs_tier, grade, flags)
+            if verdict == "NO_BET":
+                continue
+
+            kelly_div = market_cfg["kelly_div"]
+            max_stake = GRADE_MAX_STAKE[grade]
+            stake = min(
+                (edge / kelly_div) * kelly_mult,
+                max_stake,
+            )
+
             candidates.append({
-                "market":    market,
-                "prob":      round(prob, 4),
-                "fair_odd":  round(fair_odd, 3),
-                "edge":      round(edge, 4),
-                "stake_pct": round(stake, 4),
-                "verdict":   verdict,
+                "market":     market_key,
+                "label":      market_cfg["label"],
+                "grade":      grade,
+                "prob":       round(model_prob, 4),
+                "fair_odd":   round(fair_odd, 3),
+                "edge":       round(edge, 4),
+                "stake_pct":  round(stake, 4),
+                "verdict":    verdict,
             })
 
-        # ── Over 2.5
-        try_signal("over_25", probs["p_over_25"], "over_25")
+        # ── Trier : Grade A d'abord, puis edge décroissant
+        candidates.sort(key=lambda x: (GRADE_ORDER[x["grade"]], -x["edge"]))
 
-        # ── Over 3.5 — vérification signal principal (3 critères)
-        xg_ok  = probs["xg_total"] >= OVER35_PRINCIPAL["xg_min"]
-        h2h_ok = (match.get("h2h_avg_goals") or 0) >= OVER35_PRINCIPAL["h2h_min"]
-        try_signal("over_35", probs["p_over_35"], "over_35",
-                   extra_check=can_buts and (xg_ok or dcs["tier"] == "SOLID"))
+        # ── Garantie signal : si aucun edge suffisant, prendre le meilleur disponible
+        if not candidates:
+            best = self._best_fallback(all_probs, fair_odds, forbidden, kelly_mult)
+            if best:
+                candidates = [best]
+                logger.info(f"Fallback signal [{home} vs {away}]: {best['market']} edge={best['edge']:.1%}")
 
-        # ── Under 2.5 — filtre double défense obligatoire
-        if "under_25" not in forbidden and can_buts:
-            dbl = (
-                (match.get("home_avg_conceded") or 99) <= 1.2
-                and (match.get("home_over25_pct") or 1) <= 0.45
-                and (match.get("away_avg_conceded") or 99) <= 1.2
-                and (match.get("away_over25_pct") or 1) <= 0.45
-            )
-            try_signal("under_25", probs["p_under_25"], "under_25", extra_check=dbl)
+        # ── Application caps famille + session
+        final = self._apply_caps(candidates, session)
 
-        # ── 1X2 favori
-        fav_home = probs["p_home_win"] >= probs["p_away_win"]
-        fav_prob = probs["p_home_win"] if fav_home else probs["p_away_win"]
-        fav_odd  = "1x2_home" if fav_home else "1x2_away"
-        form_ok  = is_1x2_form_ok(
-            home, away,
-            flags.get("home_win_rate_effective", 0.5),
-            flags.get("away_win_rate_effective", 0.5),
-            fav_home,
-        ) and flags.get(f"1x2_{'home' if fav_home else 'away'}_form_ok", True)
-        try_signal("1x2_fav", fav_prob, fav_odd, extra_check=form_ok)
-
-        # ── 1X2 outsider (cote > 4.0)
-        out_prob = probs["p_away_win"] if fav_home else probs["p_home_win"]
-        out_odd_key = "1x2_away" if fav_home else "1x2_home"
-        out_fair = fair_odds.get(out_odd_key, 0)
-        if out_fair and out_fair > 4.0:
-            try_signal("1x2_out", out_prob, out_odd_key)
-
-        # ── BTTS Non
-        try_signal("btts_no", probs["p_btts_no"], "btts_no")
-
-        # ── Application caps
-        final = apply_family_caps(candidates, session)
-
+        # ── Enrichissement des signaux
         for s in final:
-            s["home"] = home
-            s["away"] = away
+            s["home"]     = home
+            s["away"]     = away
             s["matchday"] = match.get("matchday")
 
         logger.info(
-            f"Verdict [{home} vs {away}]: {len(final)}/{len(candidates)} signaux retenus"
+            f"Verdict [{home} vs {away}]: {len(final)}/{len(candidates)} signaux "
+            f"| Grades: {[s['grade'] for s in final]}"
         )
         return final
+
+    def _get_fair_odd(self, market_key: str, fair_odds: dict, model_prob: float) -> float | None:
+        """
+        Récupère la cote fair du marché depuis The Odds API.
+        Si indisponible, estime à partir de la proba modèle (mode dégradé).
+        """
+        # Chercher la clé exacte ou la variante _fair
+        odd = (fair_odds.get(f"{market_key}_fair")
+               or fair_odds.get(market_key))
+
+        # Mapping des clés Odds API → clés internes
+        if odd is None:
+            aliases = {
+                "1x2_home": ["1x2_home_fair", "1x2_home"],
+                "1x2_draw": ["1x2_draw_fair", "1x2_draw"],
+                "1x2_away": ["1x2_away_fair", "1x2_away"],
+                "over_25":  ["over_25_fair", "over_25"],
+                "over_35":  ["over_35_fair", "over_35"],
+                "under_25": ["under_25_fair", "under_25"],
+                "btts_yes": ["btts_yes"],
+                "btts_no":  ["btts_no"],
+                "dc_1x":    ["dc_1x"],
+                "dc_12":    ["dc_12"],
+                "dc_x2":    ["dc_x2"],
+            }
+            for alias in aliases.get(market_key, []):
+                if alias in fair_odds:
+                    odd = fair_odds[alias]
+                    break
+
+        # Mode dégradé : estimer la cote depuis la proba modèle
+        # avec une marge bookmaker simulée de 5%
+        if odd is None and model_prob > 0.05:
+            estimated = 1 / model_prob * 0.95  # 5% marge simulée
+            if estimated > 1.05:
+                return round(estimated, 3)
+            return None
+
+        return odd
+
+    def _best_fallback(
+        self, all_probs: dict, fair_odds: dict,
+        forbidden: set, kelly_mult: float
+    ) -> dict | None:
+        """
+        Fallback : retourne le marché avec le meilleur edge disponible,
+        sans condition de seuil minimum.
+        """
+        best = None
+        best_edge = -999
+
+        for market_key, market_cfg in MARKETS.items():
+            if market_key in forbidden or market_key.startswith("_"):
+                continue
+            prob = all_probs.get(market_key, 0)
+            if prob <= 0.02:
+                continue
+            fair_odd = self._get_fair_odd(market_key, fair_odds, prob)
+            if fair_odd is None or fair_odd <= 1.01:
+                continue
+            edge = compute_edge(prob, fair_odd)
+            if edge > best_edge:
+                best_edge = edge
+                grade = market_cfg["grade"]
+                best = {
+                    "market":    market_key,
+                    "label":     market_cfg["label"],
+                    "grade":     grade,
+                    "prob":      round(prob, 4),
+                    "fair_odd":  round(fair_odd, 3),
+                    "edge":      round(edge, 4),
+                    "stake_pct": round(min(max(edge / market_cfg["kelly_div"] * kelly_mult, 0.005), GRADE_MAX_STAKE[grade] * 0.5), 4),
+                    "verdict":   "SPECULATIVE",
+                }
+        return best
+
+    def _apply_caps(self, candidates: list, session: dict) -> list:
+        """Applique caps session + limite 4 signaux."""
+        candidates = sorted(candidates, key=lambda x: (GRADE_ORDER[x["grade"]], -x["edge"]))
+        total_exp  = float(session.get("total_exposure", 0))
+        n_sigs     = int(session.get("total_signals", 0))
+        is_sr      = session.get("has_strong_rupture", False)
+        max_exp    = SESSION_MAX_EXPOSURE_SR if is_sr else SESSION_MAX_EXPOSURE
+
+        selected = []
+        for s in candidates:
+            if n_sigs >= SESSION_MAX_SIGNALS: break
+            if total_exp + s["stake_pct"] > max_exp: continue
+            total_exp += s["stake_pct"]
+            n_sigs    += 1
+            selected.append(s)
+
+        return selected
+
+
+def _determine_verdict(edge: float, dcs_tier: str, grade: str, flags: dict) -> str:
+    if edge <= 0: return "NO_BET"
+    if flags.get("RUPTURE") and edge >= 0.25 and dcs_tier == "SOLID" and grade == "A":
+        return "STRONG_RUPTURE"
+    if dcs_tier == "ACCEPTABLE" or grade in ("C","D"):
+        return "SPECULATIVE" if edge >= 0.05 else "NO_BET"
+    if edge >= 0.10 and dcs_tier in ("SOLID","VALID") and grade == "A":
+        return "VARIANCE"
+    return "SMALL_BET"

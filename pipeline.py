@@ -33,6 +33,7 @@ from ingestion.normalizer     import normalize_fixture, enrich_stats
 
 from trust.trust_matrix       import DCSCalculator
 from models.dixon_coles       import compute_match_probs
+from models.market_probs       import compute_all_market_probs
 from decisions.verdict_engine  import VerdictEngine
 from decisions.rationale_builder import (
     build_pre_match_report, build_daily_summary, build_audit_report,
@@ -194,17 +195,26 @@ class ApexBundesligaPipeline:
             logger.info(f"NO BET DCS [{home} vs {away}]: {dcs['adjusted']}/70")
             return []
 
-        # ── 6. Poisson Dixon-Coles ────────────────────────────
-        probs = compute_match_probs(
+        # ── 6. Poisson → xG calibrés → ALL 40+ marchés ─────────
+        _base = compute_match_probs(
             home_att = match.get("home_avg_scored",   1.56),
             home_def = match.get("home_avg_conceded", 1.56),
             away_att = match.get("away_avg_scored",   1.56),
             away_def = match.get("away_avg_conceded", 1.56),
-            ais_home = ais_h,
-            ais_away = ais_a,
+            ais_home = ais_h, ais_away = ais_a,
             rebound_coeff = ctx.rebound_coeff,
             home_xg_mult  = ctx.home_xg_mult,
             away_xg_mult  = ctx.away_xg_mult,
+        )
+        probs = compute_all_market_probs(
+            home_xg = _base["home_xg"],
+            away_xg = _base["away_xg"],
+            home_corners_avg = match.get("home_corners_avg", 5.5),
+            away_corners_avg = match.get("away_corners_avg", 4.5),
+            home_cards_avg   = match.get("home_cards_avg",   1.8),
+            away_cards_avg   = match.get("away_cards_avg",   1.6),
+            home_shots_avg   = match.get("home_shots_avg",   5.0),
+            away_shots_avg   = match.get("away_shots_avg",   3.5),
         )
 
         # ── 7. Verdict ────────────────────────────────────────
