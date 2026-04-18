@@ -1,16 +1,16 @@
 """
-APEX_OMEGA_De1 · Rationale Builder — rapports Telegram APEX v1.4
-Format compatible Telegram Markdown v2 simplifié.
+APEX_OMEGA_De1 · Rationale Builder — rapports Telegram
+Format HTML (parse_mode=HTML) — robuste, pas de caractères à échapper.
 """
 from __future__ import annotations
 from datetime import datetime
-from bundesliga.config_v2_3 import VERDICTS, FLAGS
+from bundesliga.config_v2_3 import FLAGS
 
 MARKET_LABELS = {
     "over_25":  "⚽ OVER 2.5",
     "over_35":  "🔥 OVER 3.5",
     "under_25": "🔒 UNDER 2.5",
-    "under_35": "🔒 UNDER 3.5",
+    "under_35": "🛡️ UNDER 3.5",
     "btts_yes": "✅ BTTS OUI",
     "btts_no":  "🚫 BTTS NON",
     "1x2_fav":  "🏆 1X2 FAVORI",
@@ -18,172 +18,178 @@ MARKET_LABELS = {
 }
 
 VERDICT_LABELS = {
-    "STRONG_RUPTURE": "🔥 FORTE RUPTURE",
-    "VARIANCE":        "⚡ VARIANCE",
-    "SMALL_BET":       "📊 SMALL BET",
-    "NO_BET":          "🚫 NO BET",
+    "STRONG_RUPTURE": "🚀 FORTE RUPTURE",
+    "VARIANCE":       "📊 VARIANCE",
+    "SMALL_BET":      "🟡 SMALL BET",
+    "NO_BET":         "🚫 NO BET",
 }
 
 
+def _h(text) -> str:
+    """Échappe les entités HTML."""
+    return (str(text)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;"))
+
+
+# ═══════════════════════════════════════════════════════════════
 def build_pre_match_report(
-    match:    dict,
-    probs:    dict,
-    dcs:      dict,
-    gates:    dict,
-    signals:  list[dict],
+    match:   dict,
+    probs:   dict,
+    dcs:     dict,
+    gates:   dict,
+    signals: list[dict],
 ) -> str:
-    home = match["home_team"]
-    away = match["away_team"]
+    home = _h(match["home_team"])
+    away = _h(match["away_team"])
     md   = match.get("matchday", "?")
-    ko   = match.get("kickoff", "")
+    ko   = _h(match.get("kickoff", "")[:16].replace("T", " "))
 
     lines = [
-        f"⚽ *APEX-BUNDESLIGA A-LAP v1.4 — J{md}*",
-        f"*{home}* vs *{away}*",
-        f"📅 `{ko}` UTC",
+        "═══════════════════════════════",
+        f"⚽ <b>APEX-BUNDESLIGA v1.4 — J{md}</b>",
+        f"<b>{home}</b> vs <b>{away}</b>",
+        f"📅 {ko} UTC",
         "",
-        f"DCS *{dcs['adjusted']}/70* ({dcs['tier']}) · xG total *{probs['xg_total']}*",
+        f"DCS <b>{dcs.get('adjusted', '?')}/70</b> ({_h(dcs.get('tier','?'))})"
+        f" · xG total <b>{probs.get('xg_total','?')}</b>",
     ]
 
-    # Gates actifs + warnings
+    # Gates / warnings
     warnings = gates.get("warnings", [])
     if warnings:
-        lines.append("")
-        lines.append("⚠️ *GATES ACTIFS :*")
-        for w in warnings:
-            lines.append(f"  • {w}")
+        lines += ["", "⚠️ <b>GATES ACTIFS :</b>"]
+        for w in warnings[:6]:
+            lines.append(f"  • {_h(w)}")
 
-    # Flags actifs
-    active_flags = [k for k in gates.get("flags", {}) if k in FLAGS]
+    # Flags
+    active_flags = [k for k in gates.get("flags", {}) if k in FLAGS and gates["flags"][k] is True]
     if active_flags:
-        lines.append("")
-        lines.append("🚩 *FLAGS :* " + " · ".join(active_flags[:4]))
+        lines += ["", f"🚩 <b>FLAGS :</b> {_h(' · '.join(active_flags[:4]))}"]
 
     # Modèle Poisson
     lines += [
         "",
-        "📊 *MODÈLE POISSON :*",
-        f"  home\\_xg = `{probs['home_xg']}`  |  away\\_xg = `{probs['away_xg']}`",
-        f"  Ratio = `{probs['ratio_xg']}`  ·  Dom.Factor = `{probs.get('dom_factor', probs.get('dominance_factor', 1.0))}`",
+        "📊 <b>MODÈLE POISSON :</b>",
+        f"  home_xg = <code>{probs.get('home_xg', 0):.3f}</code>"
+        f"  |  away_xg = <code>{probs.get('away_xg', 0):.3f}</code>",
+        f"  Ratio = <code>{probs.get('ratio_xg', 1):.2f}</code>"
+        f"  ·  DomFactor = <code>{probs.get('dom_factor', 1):.2f}</code>",
     ]
 
     # Probabilités
     lines += [
         "",
-        "🎯 *PROBABILITÉS :*",
-        f"  P(Over 2.5) = {probs['p_over_25']:.1%}",
-        f"  P(Over 3.5) = {probs['p_over_35']:.1%}",
-        f"  P(Home win) = {probs['p_home_win']:.1%}  |  "
-        f"P(Away win) = {probs['p_away_win']:.1%}",
-        f"  P(BTTS Oui) = {probs['p_btts_yes']:.1%}  |  "
-        f"P(BTTS Non) = {probs['p_btts_no']:.1%}",
+        "🎯 <b>PROBABILITÉS :</b>",
+        f"  P(Over 2.5) = <code>{probs.get('p_over_25', 0):.1%}</code>",
+        f"  P(Over 3.5) = <code>{probs.get('p_over_35', 0):.1%}</code>",
+        f"  P(Home win) = <code>{probs.get('p_home_win', 0):.1%}</code>"
+        f"  |  P(Away win) = <code>{probs.get('p_away_win', 0):.1%}</code>",
+        f"  P(BTTS Oui) = <code>{probs.get('p_btts_yes', 0):.1%}</code>"
+        f"  |  P(BTTS Non) = <code>{probs.get('p_btts_no', 0):.1%}</code>",
     ]
 
     # DCS détail
-    lines += [
-        "",
-        f"📋 *DCS DÉTAIL :* G1={dcs['g1']} G2={dcs['g2']} G3={dcs['g3']} "
-        f"G4={dcs['g4']} G5={dcs['g5']} G6={dcs['g6']}",
-    ]
+    g = [dcs.get(f"g{i}", "?") for i in range(1, 7)]
+    lines += ["", f"📋 <b>DCS :</b> G1={g[0]} G2={g[1]} G3={g[2]} G4={g[3]} G5={g[4]} G6={g[5]}"]
 
     # Signaux
     if signals:
-        lines.append("")
-        lines.append("💡 *SIGNAUX RETENUS :*")
+        lines += ["", "💡 <b>SIGNAUX RETENUS :</b>"]
         total_exp = 0.0
         for s in signals:
             label   = MARKET_LABELS.get(s["market"], s["market"].upper())
-            verdict = VERDICT_LABELS.get(s["verdict"], s["verdict"])
+            verdict = VERDICT_LABELS.get(s.get("verdict", ""), s.get("verdict", ""))
             lines.append(
-                f"  {label} @ `{s['fair_odd']:.2f}`\n"
-                f"     {verdict} · Edge: `{s['edge']:.1%}` · Mise: `{s['stake_pct']:.1%}`"
+                f"  {label} @ <code>{s.get('fair_odd', 0):.2f}</code>\n"
+                f"     {verdict} · Edge: <code>{s.get('edge', 0):.1%}</code>"
+                f" · Mise: <code>{s.get('stake_pct', 0):.1%}</code>"
             )
-            total_exp += s["stake_pct"]
-        lines.append("")
-        lines.append(f"💰 *Exposition totale : {total_exp:.1%} / 12% max*")
+            total_exp += s.get("stake_pct", 0)
+        lines += ["", f"💰 <b>Exposition totale : {total_exp:.1%} / 12% max</b>"]
     else:
-        lines.append("")
-        lines.append("🚫 *NO BET — Aucun signal valide*")
+        lines += ["", "🚫 <b>NO BET</b> — Aucun signal valide"]
 
     # Marchés interdits
     forbidden = gates.get("forbidden_markets", [])
     if forbidden:
-        lines.append("")
-        lines.append(f"🔕 *Marchés exclus :* `{' · '.join(f.upper() for f in forbidden)}`")
+        lines += ["", f"🔕 <b>Exclus :</b> <code>{_h(' · '.join(f.upper() for f in forbidden))}</code>"]
 
-    lines += ["", "—", "_APEX-OMEGA De1 Bot · Usage exclusif_"]
+    lines += ["", "—", "<i>APEX-OMEGA De1 Bot · Usage exclusif</i>"]
     return "\n".join(lines)
 
 
+# ═══════════════════════════════════════════════════════════════
 def build_daily_summary(matchday: int, all_signals: list[dict], total_exp: float) -> str:
     lines = [
-        f"📊 *RÉSUMÉ SESSION APEX — J{matchday}*",
-        f"📅 {datetime.utcnow().strftime('%d/%m/%Y')}",
+        f"📊 <b>RÉSUMÉ SESSION APEX — J{matchday}</b>",
+        f"📅 {datetime.utcnow().strftime('%d/%m/%Y')} UTC",
         "",
-        f"Signaux joués   : *{len(all_signals)}*",
-        f"Exposition totale : *{total_exp:.1%}*",
+        f"Signaux joués : <b>{len(all_signals)}</b>",
+        f"Exposition totale : <b>{total_exp:.1%}</b>",
         "",
     ]
     for s in all_signals:
-        label = MARKET_LABELS.get(s["market"], s["market"])
+        label = MARKET_LABELS.get(s.get("market", ""), s.get("market", ""))
+        match = _h(s.get("match", s.get("home", "?") + " vs " + s.get("away", "?")))
         lines.append(
-            f"  {label} [{s['home']} vs {s['away']}] "
-            f"@ `{s['fair_odd']:.2f}` → `{s['stake_pct']:.1%}`"
+            f"  {label} [{match}]"
+            f" @ <code>{s.get('fair_odd', 0):.2f}</code>"
+            f" → <code>{s.get('stake_pct', 0):.1%}</code>"
         )
-    lines += ["", "_Prochain scan : 07:00 UTC_"]
+    lines += ["", "<i>Prochain scan : 07:00 UTC</i>"]
     return "\n".join(lines)
 
 
+# ═══════════════════════════════════════════════════════════════
 def build_audit_report(
     matchday: int,
     signals:  list[dict],
-    results:  dict,   # {fixture_id: {"home_goals": int, "away_goals": int}}
+    results:  dict,
 ) -> str:
     lines = [
-        f"📋 *AUDIT POST-MATCH — J{matchday}*",
-        f"📅 {datetime.utcnow().strftime('%d/%m/%Y')}",
+        f"📋 <b>AUDIT POST-MATCH — J{matchday}</b>",
+        f"📅 {datetime.utcnow().strftime('%d/%m/%Y')} UTC",
         "",
     ]
-    pl_total = 0.0
-    wins = 0
+    pl_total, wins = 0.0, 0
 
     for s in signals:
-        fid   = s.get("fixture_id")
-        res   = results.get(fid, {})
-        hg    = res.get("home_goals", 0) or 0
-        ag    = res.get("away_goals", 0) or 0
-        total = hg + ag
-        won   = _signal_won(s["market"], hg, ag)
+        fid = s.get("fixture_id")
+        res = results.get(fid, {})
+        hg  = res.get("home_goals", 0) or 0
+        ag  = res.get("away_goals", 0) or 0
+        won = _signal_won(s.get("market", ""), hg, ag)
+        match = _h(s.get("match", "?"))
 
         if won:
-            pl = s["stake_pct"] * (s["fair_odd"] - 1)
+            pl  = s.get("stake_pct", 0) * (s.get("fair_odd", 2.0) - 1)
             wins += 1
-            verdict_str = f"✅ +{pl:.2%}"
+            vstr = f"✅ +{pl:.2%}"
         else:
-            pl = -s["stake_pct"]
-            verdict_str = f"❌ -{s['stake_pct']:.2%}"
+            pl   = -s.get("stake_pct", 0)
+            vstr = f"❌ -{s.get('stake_pct', 0):.2%}"
 
         pl_total += pl
-        label = MARKET_LABELS.get(s["market"], s["market"])
-        lines.append(
-            f"  {label} [{s['home']} {hg}-{ag} {s['away']}] {verdict_str}"
-        )
+        label = MARKET_LABELS.get(s.get("market", ""), s.get("market", ""))
+        lines.append(f"  {label} [{match} {hg}-{ag}] {vstr}")
 
     rate = wins / len(signals) * 100 if signals else 0
+    sign = "+" if pl_total >= 0 else ""
     lines += [
         "",
-        f"*Résultat :* {wins}V / {len(signals)-wins}D — {rate:.0f}% taux",
-        f"*P&L session :* `{pl_total:+.2%}`",
+        f"<b>Résultat :</b> {wins}V / {len(signals)-wins}D — {rate:.0f}% taux",
+        f"<b>P&amp;L session :</b> <code>{sign}{pl_total:.2%}</code>",
     ]
     return "\n".join(lines)
 
 
 def _signal_won(market: str, hg: int, ag: int) -> bool:
-    total = hg + ag
-    if market == "over_25":  return total > 2
-    if market == "over_35":  return total > 3
-    if market == "under_25": return total < 3
-    if market == "under_35": return total < 4
-    if market == "btts_yes": return hg > 0 and ag > 0
-    if market == "btts_no":  return hg == 0 or ag == 0
-    return False
+    t = hg + ag
+    return {
+        "over_25": t > 2, "over_35": t > 3,
+        "under_25": t < 3, "under_35": t < 4,
+        "btts_yes": hg > 0 and ag > 0,
+        "btts_no":  hg == 0 or ag == 0,
+    }.get(market, False)

@@ -1,17 +1,9 @@
 """
-APEX_OMEGA_De1 · Commandes Telegram /scan
-ParseMode.MARKDOWN (v1) uniquement — aucun échappement complexe requis.
-
-  /scan today      — matchs aujourd'hui
-  /scan 24h        — 24 prochaines heures
-  /scan Nh         — N prochaines heures (ex: /scan 48h)
-  /scan week       — 7 prochains jours
-  /scan month      — 30 prochains jours
-  /scan next       — 5 prochains matchs + analyse
-  /scan status     — état session du jour
-  /scan help       — aide
+APEX_OMEGA_De1 · Commandes Telegram — HTML uniquement
+/scan today | 24h | Nh | week | month | next | status | help
 """
 from __future__ import annotations
+import asyncio
 import logging
 import re
 from datetime import datetime, timedelta
@@ -23,8 +15,6 @@ from telegram.constants import ParseMode
 from config.settings import BOT_TOKEN, CHAT_ID
 
 logger = logging.getLogger(__name__)
-MD = ParseMode.MARKDOWN
-
 _pipeline = None
 
 def set_pipeline(pipeline) -> None:
@@ -33,19 +23,20 @@ def set_pipeline(pipeline) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════
-# HANDLER PRINCIPAL
+# DISPATCHER /scan
 # ═══════════════════════════════════════════════════════════════
 async def cmd_scan(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-
     if not _pipeline:
         await _reply(update, "❌ Pipeline non initialisé.")
         return
 
     args = " ".join(ctx.args).strip().lower() if ctx.args else "today"
 
+    await _reply(update, f"🔍 <b>Scan lancé</b> : <code>{h(args)}</code> — analyse en cours...")
+
     try:
-        if args in ("today", "aujourd'hui", ""):
-            await _run_scan(update, days=1, label="aujourd'hui")
+        if args == "today":
+            await _run_scan(update, days=_days_until_midnight(), label="aujourd'hui")
 
         elif args == "24h":
             await _run_scan(update, days=1, label="24 prochaines heures")
@@ -66,47 +57,53 @@ async def cmd_scan(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             await _scan_help(update)
 
         elif re.match(r"^\d+h$", args):
-            n    = int(args[:-1])
-            days = max(1, round(n / 24))
+            n = int(args[:-1])
+            days = max(0.5, n / 24)
             await _run_scan(update, days=days, label=f"{n} prochaines heures")
 
         else:
             await _reply(update,
-                f"❓ Argument non reconnu : `{args}`\n"
-                f"Utilise `/scan help` pour la liste des commandes."
+                "❓ Argument non reconnu.\n"
+                "Utilise <code>/scan help</code> pour la liste des commandes."
             )
 
     except Exception as e:
         logger.error(f"Erreur /scan {args}: {e}", exc_info=True)
-        await _reply(update, f"❌ Erreur : `{e}`")
+        await _reply(update, f"❌ Erreur : <code>{h(str(e))}</code>")
 
 
 # ═══════════════════════════════════════════════════════════════
-# SCAN PAR FENÊTRE TEMPORELLE
+# SCAN FENÊTRE TEMPORELLE
 # ═══════════════════════════════════════════════════════════════
-async def _run_scan(update: Update, days: int, label: str) -> None:
+async def _run_scan(update: Update, days: float, label: str) -> None:
     from ingestion.fixtures_service import get_upcoming_fixtures
 
-    await _reply(update, f"🔍 Scan lancé — *{label}*...")
-
-    raw      = get_upcoming_fixtures(days_ahead=days + 1)
+    raw      = get_upcoming_fixtures(days_ahead=int(days) + 1)
     filtered = _pipeline.router.filter_batch(raw)
 
-    # Filtre fenêtre exacte
     now    = datetime.utcnow()
     cutoff = now + timedelta(days=days)
-    in_window = _filter_window(filtered, now, cutoff)
+    in_window = []
+    for fx in filtered:
+        ko_str = fx.get("fixture", {}).get("date", "")
+        try:
+            ko = datetime.fromisoformat(ko_str.replace("Z", "")).replace(tzinfo=None)
+            if now <= ko <= cutoff:
+                in_window.append(fx)
+        except Exception:
+            in_window.append(fx)
 
     if not in_window:
-        await _reply(update, f"📭 Aucun match Bundesliga trouvé — {label}.")
+        await _reply(update, f"📭 <b>Aucun match Bundesliga</b> pour : {h(label)}.")
         return
 
     await _reply(update,
-        f"⚽ *{len(in_window)} match(s)* trouvé(s) — {label}\n"
-        f"_Analyse en cours..._"
+        f"⚽ <b>{len(in_window)} match(s)</b> trouvé(s) — {h(label)}\n"
+        f"<i>Analyse en cours...</i>"
     )
 
-    session = _new_session()
+    session = {"total_exposure": 0.0, "total_signals": 0,
+               "family_over": 0.0, "family_under": 0.0, "family_1x2": 0.0}
     all_signals, passes = [], 0
 
     for raw_fx in in_window:
@@ -114,24 +111,24 @@ async def _run_scan(update: Update, days: int, label: str) -> None:
             sigs = await _pipeline._analyze(raw_fx, session)
             if sigs:
                 all_signals.extend(sigs)
-                _update_session(session, sigs)
             else:
                 passes += 1
         except Exception as e:
-            logger.error(f"Analyse {raw_fx}: {e}")
+            logger.error(f"Analyse échouée: {e}")
             passes += 1
 
+    total_exp = session["total_exposure"]
     await _reply(update,
-        f"✅ *Scan terminé — {label}*\n\n"
-        f"📊 Matchs analysés : *{len(in_window)}*\n"
-        f"💡 Signaux retenus : *{len(all_signals)}*\n"
-        f"🚫 NO BET         : *{passes}*\n"
-        f"💰 Exposition     : *{session['total_exposure']:.1%}*"
+        f"✅ <b>Scan terminé — {h(label)}</b>\n\n"
+        f"📊 Matchs analysés : <b>{len(in_window)}</b>\n"
+        f"💡 Signaux retenus : <b>{len(all_signals)}</b>\n"
+        f"🚫 NO BET : <b>{passes}</b>\n"
+        f"💰 Exposition totale : <b>{total_exp:.1%}</b>"
     )
 
 
 # ═══════════════════════════════════════════════════════════════
-# 5 PROCHAINS MATCHS
+# SCAN NEXT 5 MATCHS
 # ═══════════════════════════════════════════════════════════════
 async def _scan_next(update: Update) -> None:
     from ingestion.fixtures_service import get_upcoming_fixtures
@@ -140,38 +137,37 @@ async def _scan_next(update: Update) -> None:
     filtered = _pipeline.router.filter_batch(raw)
 
     if not filtered:
-        await _reply(update, "📭 Aucun prochain match BL trouvé sur 14 jours.")
+        await _reply(update, "📭 Aucun prochain match Bundesliga sur 14 jours.")
         return
 
     filtered.sort(key=lambda fx: fx.get("fixture", {}).get("date", "9999"))
     next5 = filtered[:5]
 
-    lines = ["⚽ *5 PROCHAINS MATCHS BUNDESLIGA*\n"]
+    lines = ["⚽ <b>5 PROCHAINS MATCHS BUNDESLIGA</b>", ""]
     for fx in next5:
         f   = fx.get("fixture", {})
-        h   = fx.get("teams", {}).get("home", {}).get("name", "?")
-        a   = fx.get("teams", {}).get("away", {}).get("name", "?")
-        ko  = f.get("date", "")[:16].replace("T", " ")
-        rnd = fx.get("league", {}).get("round", "").replace("Regular Season - ", "J")
-        lines.append(f"  🏟 *{h}* vs *{a}*  ·  {ko}  ·  {rnd}")
+        hm  = h(fx.get("teams", {}).get("home", {}).get("name", "?"))
+        aw  = h(fx.get("teams", {}).get("away", {}).get("name", "?"))
+        ko  = h(f.get("date", "")[:16].replace("T", " "))
+        rnd = h(fx.get("league", {}).get("round", "").replace("Regular Season - ", "J"))
+        lines.append(f"  🏟️ <b>{hm}</b> vs <b>{aw}</b> · {ko} UTC · {rnd}")
 
     await _reply(update, "\n".join(lines))
-    await _reply(update, "_Lancement analyse des 5 matchs..._")
+    await _reply(update, "<i>Lancement analyse des 5 matchs...</i>")
 
-    session = _new_session()
+    session = {"total_exposure": 0.0, "total_signals": 0,
+               "family_over": 0.0, "family_under": 0.0, "family_1x2": 0.0}
     all_sigs = []
     for raw_fx in next5:
         try:
             sigs = await _pipeline._analyze(raw_fx, session)
-            all_sigs.extend(sigs)
-            _update_session(session, sigs)
+            all_sigs.extend(sigs or [])
         except Exception as e:
             logger.error(f"Analyse next: {e}")
 
     await _reply(update,
-        f"✅ *Analyse terminée*\n"
-        f"  Signaux : *{len(all_sigs)}* sur {len(next5)} matchs\n"
-        f"  Exposition : *{session['total_exposure']:.1%}*"
+        f"✅ <b>Analyse terminée</b> : "
+        f"<b>{len(all_sigs)}</b> signal(s) sur {len(next5)} matchs"
     )
 
 
@@ -180,105 +176,86 @@ async def _scan_next(update: Update) -> None:
 # ═══════════════════════════════════════════════════════════════
 async def _scan_status(update: Update) -> None:
     from storage.signals_repo import SignalsRepo
-    today     = SignalsRepo().get_today()
+    repo      = SignalsRepo()
+    today     = repo.get_today()
     total_exp = sum(s.get("stake_pct", 0) for s in today)
-    anti      = getattr(_pipeline, "_anti_under_remaining", 0)
+    anti_under = getattr(_pipeline, "_anti_under_remaining", 0)
     date_str  = datetime.utcnow().strftime("%d/%m/%Y")
 
     if not today:
         await _reply(update,
-            f"📊 *STATUS APEX — {date_str}*\n\n"
+            f"📊 <b>STATUS APEX — {date_str}</b>\n\n"
             f"Aucun signal joué aujourd'hui.\n"
-            f"Prochain scan auto : 07:00 UTC"
+            f"<i>Prochain scan auto : 07:00 UTC</i>"
         )
         return
 
     lines = [
-        f"📊 *STATUS APEX — {date_str}*\n",
-        f"Signaux joués : *{len(today)}* / 4 max",
-        f"Exposition    : *{total_exp:.1%}* / 12% max",
-        f"Anti-Under    : *{'ACTIF' if anti > 0 else 'OFF'}*",
+        f"📊 <b>STATUS APEX — {date_str}</b>", "",
+        f"Signaux joués  : <b>{len(today)}</b> / 4 max",
+        f"Exposition     : <b>{total_exp:.1%}</b> / 12% max",
+        f"Anti-Under     : <b>{'🔴 ACTIF' if anti_under > 0 else '🟢 OFF'}</b>",
         "",
-        "*Détail :*",
+        "<b>Détail signaux :</b>",
     ]
     for s in today:
-        market  = MARKET_ICONS.get(s.get("market", ""), "•")
-        match   = s.get("match", "?")
-        odd     = s.get("fair_odd", 0)
-        stake   = s.get("stake_pct", 0)
-        result  = s.get("result", {})
-        icon    = ("✅" if result.get("won") else "❌") if result else "⏳"
-        lines.append(f"  {icon} {market} {match} @ `{odd:.2f}` ({stake:.1%})")
+        market = MARKET_LABELS.get(s.get("market", ""), s.get("market", "?").upper())
+        match  = h(s.get("match", "?"))
+        odd    = s.get("fair_odd", 0)
+        stake  = s.get("stake_pct", 0)
+        result = s.get("result")
+        icon   = ("✅" if result.get("won") else "❌") if result else "⏳"
+        lines.append(f"  {icon} {match} — {market} @ <code>{odd:.2f}</code> ({stake:.1%})")
 
     await _reply(update, "\n".join(lines))
 
+MARKET_LABELS = {
+    "over_25": "⚽ OVER 2.5", "over_35": "🔥 OVER 3.5",
+    "under_25": "🔒 UNDER 2.5", "under_35": "🛡️ UNDER 3.5",
+    "btts_yes": "✅ BTTS OUI", "btts_no": "🚫 BTTS NON",
+    "1x2_fav":  "🏆 1X2 FAV.", "1x2_out": "⚡ 1X2 OUTSIDER",
+}
 
 # ═══════════════════════════════════════════════════════════════
 # AIDE
 # ═══════════════════════════════════════════════════════════════
 async def _scan_help(update: Update) -> None:
     await _reply(update,
-        "📖 *APEX-OMEGA BUNDESLIGA — Commandes /scan*\n\n"
-        "`/scan today`    — matchs d'aujourd'hui\n"
-        "`/scan 24h`      — matchs dans les 24h\n"
-        "`/scan 48h`      — matchs dans les 48h (Nh = N heures)\n"
-        "`/scan week`     — matchs des 7 prochains jours\n"
-        "`/scan month`    — matchs des 30 prochains jours\n"
-        "`/scan next`     — 5 prochains matchs BL + analyse\n"
-        "`/scan status`   — état session du jour\n"
-        "`/scan help`     — cette aide\n\n"
-        "_Scan automatique : 07:00 UTC_\n"
-        "_Audit post-match : 02:00 UTC_"
+        "📖 <b>APEX-OMEGA BUNDESLIGA — Commandes /scan</b>\n\n"
+        "<code>/scan today</code>    — matchs d'aujourd'hui\n"
+        "<code>/scan 24h</code>      — matchs dans les 24h\n"
+        "<code>/scan 48h</code>      — matchs dans les 48h (Nh = N heures)\n"
+        "<code>/scan week</code>     — matchs des 7 prochains jours\n"
+        "<code>/scan month</code>    — matchs des 30 prochains jours\n"
+        "<code>/scan next</code>     — 5 prochains matchs BL + analyse\n"
+        "<code>/scan status</code>   — état session du jour\n"
+        "<code>/scan help</code>     — cette aide\n\n"
+        "<i>Scan automatique : 07:00 UTC · Audit : 02:00 UTC</i>"
     )
 
 
 # ═══════════════════════════════════════════════════════════════
 # UTILS
 # ═══════════════════════════════════════════════════════════════
-MARKET_ICONS = {
-    "over_25": "⚽", "over_35": "🔥",
-    "under_25": "🔒", "btts_no": "🚫",
-    "btts_yes": "✅", "1x2_fav": "🏆",
-    "1x2_out": "⚡",
-}
+def _days_until_midnight() -> float:
+    now = datetime.utcnow()
+    midnight = now.replace(hour=23, minute=59, second=59)
+    return max(0.1, (midnight - now).total_seconds() / 86400)
 
-def _filter_window(fixtures: list, now: datetime, cutoff: datetime) -> list:
-    result = []
-    for fx in fixtures:
-        ko_str = fx.get("fixture", {}).get("date", "")
-        if not ko_str:
-            result.append(fx)
-            continue
-        try:
-            ko = datetime.fromisoformat(ko_str.replace("Z", "+00:00")).replace(tzinfo=None)
-            if now <= ko <= cutoff:
-                result.append(fx)
-        except Exception:
-            result.append(fx)
-    return result
-
-def _new_session() -> dict:
-    return {"total_exposure": 0.0, "total_signals": 0,
-            "family_over": 0.0, "family_under": 0.0, "family_1x2": 0.0}
-
-def _update_session(session: dict, signals: list) -> None:
-    for s in signals:
-        session["total_exposure"] += s.get("stake_pct", 0)
-        session["total_signals"]  += 1
-        mkt = s.get("market", "")
-        if mkt in ("over_25", "over_35"):    session["family_over"]  += s.get("stake_pct", 0)
-        elif mkt in ("under_25", "btts_no"): session["family_under"] += s.get("stake_pct", 0)
-        elif mkt.startswith("1x2"):          session["family_1x2"]   += s.get("stake_pct", 0)
+def h(text: str) -> str:
+    """Échappe les entités HTML."""
+    return (str(text)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;"))
 
 async def _reply(update: Update, text: str) -> None:
-    try:
-        await update.effective_message.reply_text(
-            text, parse_mode=MD, disable_web_page_preview=True
-        )
-    except Exception as e:
-        logger.warning(f"Markdown reply failed ({e}), fallback plain")
-        plain = text.replace("*", "").replace("_", "").replace("`", "")
-        await update.effective_message.reply_text(plain)
+    await update.effective_message.reply_text(
+        text,
+        parse_mode=ParseMode.HTML,
+        disable_web_page_preview=True,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -288,5 +265,5 @@ def build_application(pipeline) -> Application:
     set_pipeline(pipeline)
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("scan", cmd_scan))
-    logger.info("✅ Handler /scan enregistré (MARKDOWN v1)")
+    logger.info("✅ Handler /scan enregistré (HTML mode)")
     return app
