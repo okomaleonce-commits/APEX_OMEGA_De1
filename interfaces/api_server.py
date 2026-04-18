@@ -189,3 +189,93 @@ async def performance():
         })
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/debug/fixtures")
+async def debug_fixtures():
+    """Debug : appel brut API-Football pour voir ce que retourne l'API."""
+    import requests
+    from config.settings import API_KEY, BUNDESLIGA_API_ID
+    from datetime import datetime, timedelta
+
+    BASE = "https://v3.football.api-sports.io"
+    HDR  = {"x-apisports-key": API_KEY}
+    now  = datetime.utcnow()
+
+    results = {}
+
+    # Test 1: next=50
+    try:
+        r = requests.get(f"{BASE}/fixtures", headers=HDR, timeout=15,
+            params={"league": BUNDESLIGA_API_ID, "season": 2025, "next": 50})
+        d = r.json()
+        results["next50_s2025"] = {
+            "status": r.status_code,
+            "count": len(d.get("response", [])),
+            "errors": d.get("errors"),
+            "first": d.get("response", [{}])[0].get("fixture", {}).get("date") if d.get("response") else None
+        }
+    except Exception as e:
+        results["next50_s2025"] = {"error": str(e)}
+
+    # Test 2: next=50 saison 2024
+    try:
+        r = requests.get(f"{BASE}/fixtures", headers=HDR, timeout=15,
+            params={"league": BUNDESLIGA_API_ID, "season": 2024, "next": 50})
+        d = r.json()
+        results["next50_s2024"] = {
+            "status": r.status_code,
+            "count": len(d.get("response", [])),
+            "errors": d.get("errors"),
+            "first": d.get("response", [{}])[0].get("fixture", {}).get("date") if d.get("response") else None
+        }
+    except Exception as e:
+        results["next50_s2024"] = {"error": str(e)}
+
+    # Test 3: from/to sans status
+    try:
+        today = now.date()
+        r = requests.get(f"{BASE}/fixtures", headers=HDR, timeout=15,
+            params={"league": BUNDESLIGA_API_ID, "season": 2025,
+                    "from": str(today), "to": str(today + timedelta(days=7))})
+        d = r.json()
+        results["from_to_s2025"] = {
+            "status": r.status_code,
+            "count": len(d.get("response", [])),
+            "errors": d.get("errors"),
+            "fixtures": [
+                {"date": fx.get("fixture",{}).get("date"),
+                 "home": fx.get("teams",{}).get("home",{}).get("name"),
+                 "away": fx.get("teams",{}).get("away",{}).get("name"),
+                 "status": fx.get("fixture",{}).get("status",{}).get("short")}
+                for fx in d.get("response", [])[:5]
+            ]
+        }
+    except Exception as e:
+        results["from_to_s2025"] = {"error": str(e)}
+
+    # Test 4: from/to saison 2024
+    try:
+        today = now.date()
+        r = requests.get(f"{BASE}/fixtures", headers=HDR, timeout=15,
+            params={"league": BUNDESLIGA_API_ID, "season": 2024,
+                    "from": str(today), "to": str(today + timedelta(days=7))})
+        d = r.json()
+        results["from_to_s2024"] = {
+            "status": r.status_code,
+            "count": len(d.get("response", [])),
+            "errors": d.get("errors"),
+            "fixtures": [
+                {"date": fx.get("fixture",{}).get("date"),
+                 "home": fx.get("teams",{}).get("home",{}).get("name"),
+                 "away": fx.get("teams",{}).get("away",{}).get("name"),
+                 "status": fx.get("fixture",{}).get("status",{}).get("short")}
+                for fx in d.get("response", [])[:5]
+            ]
+        }
+    except Exception as e:
+        results["from_to_s2024"] = {"error": str(e)}
+
+    results["now_utc"] = now.isoformat()
+    results["league_id"] = BUNDESLIGA_API_ID
+    return JSONResponse(results)
