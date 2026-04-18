@@ -24,8 +24,9 @@ def get_bundesliga_odds() -> list:
             params={
                 "apiKey":     ODDS_API_KEY,
                 "regions":    "eu",
-                "markets":    "h2h,totals",   # btts retiré — non supporté plan gratuit
+                "markets":    "h2h,totals",
                 "oddsFormat": "decimal",
+                # bookmakers param omis → utilise tous les bookmakers du plan
             },
             timeout=20,
         )
