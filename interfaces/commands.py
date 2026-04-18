@@ -78,7 +78,7 @@ async def cmd_scan(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 async def _run_scan(update: Update, days: float, label: str) -> None:
     from ingestion.fixtures_service import get_upcoming_fixtures_robust as get_upcoming_fixtures
 
-    raw      = get_upcoming_fixtures_robust(days_ahead=int(days) + 1)
+    raw      = get_upcoming_fixtures(days_ahead=int(days) + 1)
     filtered = _pipeline.router.filter_batch(raw)
 
     now    = datetime.utcnow()
@@ -133,7 +133,7 @@ async def _run_scan(update: Update, days: float, label: str) -> None:
 async def _scan_next(update: Update) -> None:
     from ingestion.fixtures_service import get_upcoming_fixtures_robust as get_upcoming_fixtures
 
-    raw      = get_upcoming_fixtures_robust(days_ahead=14)
+    raw      = get_upcoming_fixtures(days_ahead=14)
     filtered = _pipeline.router.filter_batch(raw)
 
     if not filtered:

@@ -9,6 +9,12 @@ from datetime import datetime, timedelta
 from config.settings import API_KEY, BUNDESLIGA_API_ID, BUNDESLIGA_SEASON
 
 logger = logging.getLogger(__name__)
+
+try:
+    from ingestion.fixtures_cache import get_cached, set_cache
+except Exception:
+    get_cached = lambda k: None
+    set_cache   = lambda k, v: None
 BASE_URL = "https://v3.football.api-sports.io"
 HEADERS  = {"x-apisports-key": API_KEY}
 
@@ -260,10 +266,16 @@ def get_current_round() -> str | None:
 def get_upcoming_fixtures_robust(days_ahead: int = 7) -> list:
     """
     Version robuste qui essaie toutes les stratégies dans l'ordre :
-    1. next=50 (plan payant API-Football)
-    2. round actuel + suivant (fonctionne sur tous les plans)
-    3. from/to sans status
+    1. Cache local (TTL 2h) — protège quota 100 req/jour
+    2. next=50 (plan payant API-Football)
+    3. round actuel + suivant (fonctionne sur tous les plans)
+    4. from/to sans status
     """
+    cache_key = f"fixtures_{days_ahead}j"
+    cached = get_cached(cache_key)
+    if cached is not None:
+        return cached
+
     now    = datetime.utcnow()
     cutoff = now.timestamp() + days_ahead * 86400
     season = get_active_season()
@@ -279,6 +291,7 @@ def get_upcoming_fixtures_robust(days_ahead: int = 7) -> list:
                        if (fx.get("fixture",{}).get("timestamp") or 0) <= cutoff]
             logger.info(f"Stratégie next=50: {len(filtered)} fixtures")
             if filtered:
+                set_cache(cache_key, filtered)
                 return filtered
     except Exception as e:
         logger.debug(f"next=50 failed: {e}")
@@ -303,6 +316,7 @@ def get_upcoming_fixtures_robust(days_ahead: int = 7) -> list:
                        and (fx.get("fixture",{}).get("timestamp") or 0) <= cutoff]
             logger.info(f"Stratégie round {current_round}: {len(upcoming)} fixtures")
             if upcoming:
+                set_cache(cache_key, upcoming)
                 return upcoming
     except Exception as e:
         logger.debug(f"round strategy failed: {e}")
@@ -319,6 +333,8 @@ def get_upcoming_fixtures_robust(days_ahead: int = 7) -> list:
         upcoming = [fx for fx in all_data
                    if (fx.get("fixture",{}).get("timestamp") or 0) > now.timestamp()]
         logger.info(f"Stratégie from/to: {len(upcoming)}/{len(all_data)} fixtures")
+        if upcoming:
+            set_cache(cache_key, upcoming)
         return upcoming
     except Exception as e:
         logger.error(f"Toutes stratégies échouées: {e}")
