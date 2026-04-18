@@ -415,8 +415,12 @@ AIS_F_DEFAULT = {
 }
 
 # ── AIS-F joueurs clés par club (extrait de CLUBS pour compatibilité import direct)
-AIS_F = {
-    club: data.get("ais_f", {})
-    for club, data in CLUBS.items()
-    if "ais_f" in data
-}
+# AIS_F : dict {club: {player: impact_dict}} construit depuis AIS_F_PLAYERS
+AIS_F = {}
+for _player, _data in AIS_F_PLAYERS.items():
+    _team = _data["team"]
+    if _team not in AIS_F:
+        AIS_F[_team] = {}
+    AIS_F[_team][_player] = {
+        k: v for k, v in _data.items() if k != "team"
+    }
