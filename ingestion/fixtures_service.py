@@ -83,3 +83,63 @@ def get_fixture_stats(fixture_id: int) -> dict:
     )
     resp.raise_for_status()
     return resp.json().get("response", {})
+
+
+def get_fixture_result(fixture_id: int) -> dict:
+    """
+    Retourne le score final d'un match terminé.
+    Utilisé par l'audit post-match.
+    Returns: {"home_goals": int, "away_goals": int, "status": str}
+    """
+    resp = requests.get(
+        f"{BASE_URL}/fixtures",
+        headers=HEADERS,
+        params={"id": fixture_id},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json().get("response", [])
+    if not data:
+        return {}
+    f = data[0]
+    goals = f.get("goals", {})
+    return {
+        "home_goals": goals.get("home", 0) or 0,
+        "away_goals": goals.get("away", 0) or 0,
+        "status":     f.get("fixture", {}).get("status", {}).get("short", "?"),
+    }
+
+
+def compute_win_rate(fixtures: list[dict], team_id: int, last: int = 8) -> float:
+    """
+    Calcule le taux de victoire sur les N derniers matchs d'une équipe.
+    Returns: float entre 0.0 et 1.0
+    """
+    if not fixtures:
+        return 0.40  # valeur par défaut Bundesliga
+    wins = 0
+    for f in fixtures[-last:]:
+        teams = f.get("teams", {})
+        home  = teams.get("home", {})
+        away  = teams.get("away", {})
+        if home.get("id") == team_id and home.get("winner"):
+            wins += 1
+        elif away.get("id") == team_id and away.get("winner"):
+            wins += 1
+    return round(wins / min(len(fixtures), last), 3)
+
+
+def compute_h2h_avg_goals(h2h_fixtures: list[dict]) -> float:
+    """
+    Calcule la moyenne de buts par match sur l'historique H2H.
+    Returns: float (ex: 2.6)
+    """
+    if not h2h_fixtures:
+        return 2.6  # moyenne Bundesliga par défaut
+    totals = []
+    for f in h2h_fixtures:
+        goals = f.get("goals", {})
+        hg = goals.get("home") or 0
+        ag = goals.get("away") or 0
+        totals.append(hg + ag)
+    return round(sum(totals) / len(totals), 2) if totals else 2.6

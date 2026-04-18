@@ -54,3 +54,24 @@ async def send_error_alert(context: str, error: str) -> None:
 def sync_send(text: str) -> None:
     """Wrapper synchrone (hors contexte async)."""
     asyncio.run(send_message(text))
+
+
+async def send_no_bet_summary(matchday: int, passes: int) -> None:
+    """Résumé quand aucun signal n'est retenu pour la journée."""
+    msg = (
+        f"🚫 *APEX BUNDESLIGA · J{matchday}*\n"
+        f"Aucun signal retenu pour cette journée\\.\n"
+        f"{passes} match\\(s\\) analysé\\(s\\) · NO BET\n\n"
+        f"_Prochain scan : 07:00 UTC_"
+    )
+    await send(msg)
+
+
+async def send_analysis(text: str) -> None:
+    """Alias pour compatibilité pipeline.py → send()"""
+    await send(text)
+
+
+async def send_audit(text: str) -> None:
+    """Alias audit post-match → send()"""
+    await send(text)
