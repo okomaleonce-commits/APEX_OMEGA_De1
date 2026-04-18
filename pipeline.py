@@ -58,11 +58,15 @@ class ApexBundesligaPipeline:
         self._anti_under_remaining = 0
 
     # ─────────────────────────────────────────────────────────────
-    async def daily_scan(self, days_ahead: int = 3):
-        """Analyse les matchs des N prochains jours. Appelable via scheduler ou /scan."""
-        logger.info("=== APEX Daily Scan démarré ===")
-        raw      = get_upcoming_fixtures(days_ahead=max(days_ahead, 0))
+    async def daily_scan(self, days_ahead: int = 3, max_results: int | None = None):
+        """Analyse les matchs des N prochains jours. Appelable via scheduler ou /scan.
+        max_results : limiter aux N premiers matchs (None = tous).
+        """
+        logger.info(f"=== APEX Daily Scan démarré (days={days_ahead}) ===")
+        raw      = get_upcoming_fixtures(days_ahead=max(days_ahead, 1))
         filtered = self.router.filter_batch(raw)          # ← filter_batch()
+        if max_results:
+            filtered = filtered[:max_results]
 
         session = {
             "total_exposure": 0.0, "total_signals": 0,

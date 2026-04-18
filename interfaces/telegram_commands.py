@@ -139,7 +139,7 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if signals:
             lines.append("")
             for s in signals[-4:]:  # 4 derniers
-                from interfaces.telegram_bot import MARKET_LABELS
+                from decisions.rationale_builder import MARKET_LABELS
                 label = MARKET_LABELS.get(s.get("market",""), s.get("market",""))
                 lines.append(
                     f"  • {s.get('match','?')} — {label} "
