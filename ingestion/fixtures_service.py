@@ -15,45 +15,73 @@ HEADERS  = {"x-apisports-key": API_KEY}
 
 def get_upcoming_fixtures(days_ahead: int = 7) -> list[dict]:
     """
-    Matchs Bundesliga des N prochains jours.
-    PAS de filtre status=NS — on filtre ensuite sur timestamp futur.
-    Raison : à 23h UTC, les matchs de demain (J+1) ont from=aujourd'hui
-    mais l'API les retourne seulement si on ne filtre pas sur NS strict.
+    Matchs Bundesliga à venir.
+    Stratégie double :
+    1. Paramètre next=50 → API retourne les 50 prochains matchs NS directement
+    2. Fallback from/to si next retourne vide (hors saison, pré-saison...)
+    Filtre final : timestamp < now + days_ahead * 86400
     """
-    now   = datetime.utcnow()
-    today = now.date()
-    to    = today + timedelta(days=days_ahead)
+    now    = datetime.utcnow()
+    cutoff = now.timestamp() + days_ahead * 86400
 
-    resp = requests.get(
-        f"{BASE_URL}/fixtures",
-        headers=HEADERS,
-        params={
-            "league":  BUNDESLIGA_API_ID,
-            "season":  BUNDESLIGA_SEASON,
-            "from":    str(today),
-            "to":      str(to),
-            # Pas de filtre status — récupère NS + 1H (en cours) + FT
-        },
-        timeout=15,
-    )
-    resp.raise_for_status()
-    all_data = resp.json().get("response", [])
+    # ── Stratégie 1 : paramètre next (le plus fiable)
+    try:
+        resp = requests.get(
+            f"{BASE_URL}/fixtures",
+            headers=HEADERS,
+            params={
+                "league":  BUNDESLIGA_API_ID,
+                "season":  get_active_season(),
+                "next":    50,              # 50 prochains matchs NS
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json().get("response", [])
 
-    # Filtre : garder uniquement les matchs non encore commencés (timestamp futur)
-    now_ts = now.timestamp()
-    upcoming = []
-    for fx in all_data:
-        ko_ts = fx.get("fixture", {}).get("timestamp")
-        status = fx.get("fixture", {}).get("status", {}).get("short", "NS")
-        # Accepter NS ou matchs dont le KO est dans le futur
-        if status in ("NS", "TBD") or (ko_ts and ko_ts > now_ts):
-            upcoming.append(fx)
+        if data:
+            # Filtrer sur la fenêtre days_ahead
+            filtered = [
+                fx for fx in data
+                if (fx.get("fixture", {}).get("timestamp") or 0) <= cutoff
+            ]
+            logger.info(
+                f"API-Football (next=50): {len(filtered)}/{len(data)} "
+                f"fixtures BL dans les {days_ahead}j"
+            )
+            return filtered
+    except Exception as e:
+        logger.warning(f"API next=50 échoué: {e} — fallback from/to")
 
-    logger.info(
-        f"API-Football: {len(upcoming)}/{len(all_data)} fixtures BL à venir "
-        f"(filtre timestamp > {now.strftime('%H:%M')} UTC)"
-    )
-    return upcoming
+    # ── Stratégie 2 : fallback from/to sans filtre status
+    try:
+        today = now.date()
+        to    = today + timedelta(days=days_ahead)
+        resp  = requests.get(
+            f"{BASE_URL}/fixtures",
+            headers=HEADERS,
+            params={
+                "league":  BUNDESLIGA_API_ID,
+                "season":  get_active_season(),
+                "from":    str(today),
+                "to":      str(to),
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        all_data = resp.json().get("response", [])
+        upcoming = [
+            fx for fx in all_data
+            if (fx.get("fixture", {}).get("timestamp") or 0) > now.timestamp()
+        ]
+        logger.info(
+            f"API-Football (from/to fallback): {len(upcoming)}/{len(all_data)} "
+            f"fixtures BL à venir"
+        )
+        return upcoming
+    except Exception as e:
+        logger.error(f"get_upcoming_fixtures fallback échoué: {e}")
+        return []
 
 
 def get_team_form(team_id: int, last: int = 8) -> list[dict]:
@@ -169,3 +197,34 @@ def compute_h2h_avg_goals(h2h_fixtures: list[dict]) -> float:
         ag = goals.get("away") or 0
         totals.append(hg + ag)
     return round(sum(totals) / len(totals), 2) if totals else 2.6
+
+
+def get_active_season() -> int:
+    """
+    Détecte la saison Bundesliga active sur API-Football.
+    Bundesliga saison = année de début (2025 = saison 2025-26).
+    En avril 2026 → saison 2025.
+    """
+    from datetime import date
+    today = date.today()
+    # La saison BL commence en août et se termine en mai
+    # Si on est entre janvier et juillet → saison = année précédente
+    if today.month < 8:
+        return today.year - 1
+    return today.year
+
+def get_standings_safe() -> list:
+    """Classement actuel — détecte la bonne saison automatiquement."""
+    season = get_active_season()
+    try:
+        resp = requests.get(
+            f"{BASE_URL}/standings",
+            headers=HEADERS,
+            params={"league": BUNDESLIGA_API_ID, "season": season},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json().get("response", [])
+    except Exception as e:
+        logger.error(f"Standings: {e}")
+        return []
