@@ -228,3 +228,98 @@ def get_standings_safe() -> list:
     except Exception as e:
         logger.error(f"Standings: {e}")
         return []
+
+
+def get_fixtures_by_round(round_str: str, season: int = None) -> list:
+    """Fixtures d'une journée spécifique ex: 'Regular Season - 30'"""
+    s = season or get_active_season()
+    try:
+        r = requests.get(f"{BASE_URL}/fixtures", headers=HEADERS, timeout=15,
+            params={"league": BUNDESLIGA_API_ID, "season": s, "round": round_str})
+        r.raise_for_status()
+        return r.json().get("response", [])
+    except Exception as e:
+        logger.error(f"get_fixtures_by_round: {e}")
+        return []
+
+
+def get_current_round() -> str | None:
+    """Retourne le round actuel de la Bundesliga."""
+    season = get_active_season()
+    try:
+        r = requests.get(f"{BASE_URL}/fixtures/rounds", headers=HEADERS, timeout=15,
+            params={"league": BUNDESLIGA_API_ID, "season": season, "current": "true"})
+        r.raise_for_status()
+        rounds = r.json().get("response", [])
+        return rounds[0] if rounds else None
+    except Exception as e:
+        logger.error(f"get_current_round: {e}")
+        return None
+
+
+def get_upcoming_fixtures_robust(days_ahead: int = 7) -> list:
+    """
+    Version robuste qui essaie toutes les stratégies dans l'ordre :
+    1. next=50 (plan payant API-Football)
+    2. round actuel + suivant (fonctionne sur tous les plans)
+    3. from/to sans status
+    """
+    now    = datetime.utcnow()
+    cutoff = now.timestamp() + days_ahead * 86400
+    season = get_active_season()
+
+    # Stratégie 1 : next=50
+    try:
+        r = requests.get(f"{BASE_URL}/fixtures", headers=HEADERS, timeout=15,
+            params={"league": BUNDESLIGA_API_ID, "season": season, "next": 50})
+        r.raise_for_status()
+        data = r.json().get("response", [])
+        if data:
+            filtered = [fx for fx in data
+                       if (fx.get("fixture",{}).get("timestamp") or 0) <= cutoff]
+            logger.info(f"Stratégie next=50: {len(filtered)} fixtures")
+            if filtered:
+                return filtered
+    except Exception as e:
+        logger.debug(f"next=50 failed: {e}")
+
+    # Stratégie 2 : round actuel + round suivant
+    try:
+        current_round = get_current_round()
+        if current_round:
+            # Extraire le numéro de journée
+            num = int(current_round.split(" - ")[-1])
+            rounds_to_check = [
+                f"Regular Season - {num}",
+                f"Regular Season - {num + 1}",
+            ]
+            all_fx = []
+            for rnd in rounds_to_check:
+                fx_list = get_fixtures_by_round(rnd, season)
+                all_fx.extend(fx_list)
+
+            upcoming = [fx for fx in all_fx
+                       if (fx.get("fixture",{}).get("timestamp") or 0) > now.timestamp()
+                       and (fx.get("fixture",{}).get("timestamp") or 0) <= cutoff]
+            logger.info(f"Stratégie round {current_round}: {len(upcoming)} fixtures")
+            if upcoming:
+                return upcoming
+    except Exception as e:
+        logger.debug(f"round strategy failed: {e}")
+
+    # Stratégie 3 : from/to (fallback ultime)
+    try:
+        today = now.date()
+        to    = today + timedelta(days=days_ahead)
+        r = requests.get(f"{BASE_URL}/fixtures", headers=HEADERS, timeout=15,
+            params={"league": BUNDESLIGA_API_ID, "season": season,
+                    "from": str(today), "to": str(to)})
+        r.raise_for_status()
+        all_data = r.json().get("response", [])
+        upcoming = [fx for fx in all_data
+                   if (fx.get("fixture",{}).get("timestamp") or 0) > now.timestamp()]
+        logger.info(f"Stratégie from/to: {len(upcoming)}/{len(all_data)} fixtures")
+        return upcoming
+    except Exception as e:
+        logger.error(f"Toutes stratégies échouées: {e}")
+        return []

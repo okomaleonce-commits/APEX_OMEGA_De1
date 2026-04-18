@@ -279,3 +279,37 @@ async def debug_fixtures():
     results["now_utc"] = now.isoformat()
     results["league_id"] = BUNDESLIGA_API_ID
     return JSONResponse(results)
+
+
+@app.get("/debug/round")
+async def debug_round():
+    """Debug : teste la stratégie par round API-Football."""
+    from ingestion.fixtures_service import (
+        get_current_round, get_fixtures_by_round,
+        get_active_season, get_upcoming_fixtures_robust
+    )
+    season = get_active_season()
+    current = get_current_round()
+    
+    result = {
+        "season_detected": season,
+        "current_round": current,
+        "robust_count": len(get_upcoming_fixtures_robust(days_ahead=7)),
+    }
+    
+    if current:
+        num = int(current.split(" - ")[-1])
+        for n in [num, num+1]:
+            rnd = f"Regular Season - {n}"
+            fxs = get_fixtures_by_round(rnd, season)
+            result[f"round_{n}"] = {
+                "count": len(fxs),
+                "matches": [
+                    {"home": fx.get("teams",{}).get("home",{}).get("name"),
+                     "away": fx.get("teams",{}).get("away",{}).get("name"),
+                     "date": fx.get("fixture",{}).get("date"),
+                     "status": fx.get("fixture",{}).get("status",{}).get("short")}
+                    for fx in fxs[:5]
+                ]
+            }
+    return JSONResponse(result)

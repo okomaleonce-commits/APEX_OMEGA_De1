@@ -20,7 +20,8 @@ from bundesliga.config_v2_3 import (
 )
 
 from ingestion.fixtures_service import (
-    get_upcoming_fixtures, get_team_form,
+    get_upcoming_fixtures_robust as get_upcoming_fixtures,
+    get_team_form,
     get_h2h, get_fixture_result,
     compute_win_rate, compute_h2h_avg_goals,
 )
@@ -59,7 +60,7 @@ class ApexBundesligaPipeline:
     async def daily_scan(self):
         """07:00 UTC — analyse les matchs des 3 prochains jours."""
         logger.info("=== APEX Daily Scan ===")
-        raw      = get_upcoming_fixtures(days_ahead=3)
+        raw      = get_upcoming_fixtures_robust(days_ahead=3)
         filtered = self.router.filter_batch(raw)
 
         session = _new_session()
