@@ -1,15 +1,16 @@
 """APEX_OMEGA_De1 · Normalizer — API-Football → APEX format"""
 def normalize_fixture(raw):
-    f  = raw.get("fixture",{})
-    lg = raw.get("league",{})
-    h  = raw.get("teams",{}).get("home",{})
-    a  = raw.get("teams",{}).get("away",{})
+    from bundesliga.config_v2_3 import normalize_club_name
+    f  = raw.get("fixture",{}) if isinstance(raw.get("fixture"), dict) else {}
+    lg = raw.get("league",{})  if isinstance(raw.get("league"),  dict) else {}
+    h  = raw.get("teams",{}).get("home",{}) if isinstance(raw.get("teams"), dict) else {}
+    a  = raw.get("teams",{}).get("away",{}) if isinstance(raw.get("teams"), dict) else {}
     return {
         "fixture_id": f.get("id"),
         "matchday":   int(str(lg.get("round","0")).replace("Regular Season - ","")),
         "kickoff":    f.get("date",""),
-        "home_team":  h.get("name",""),
-        "away_team":  a.get("name",""),
+        "home_team":  normalize_club_name(h.get("name","")),
+        "away_team":  normalize_club_name(a.get("name","")),
         "home_id":    h.get("id"),
         "away_id":    a.get("id"),
         "league_id":  lg.get("id", 78),

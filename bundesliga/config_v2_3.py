@@ -424,3 +424,100 @@ for _player, _data in AIS_F_PLAYERS.items():
     AIS_F[_team][_player] = {
         k: v for k, v in _data.items() if k != "team"
     }
+
+# ── Mapping noms API-Football → noms CLUBS internes
+# Clé = nom exact retourné par API-Football
+# Valeur = clé dans le dict CLUBS
+API_NAME_MAP = {
+    # Noms officiels API-Football → noms CLUBS
+    "1899 Hoffenheim":              "Hoffenheim",
+    "TSG 1899 Hoffenheim":          "Hoffenheim",
+    "1. FC Union Berlin":           "1. FC Union Berlin",
+    "Union Berlin":                 "1. FC Union Berlin",
+    "FC Union Berlin":              "1. FC Union Berlin",
+    "Borussia Monchengladbach":     "Borussia M'gladbach",
+    "Borussia Mönchengladbach":     "Borussia M'gladbach",
+    "Mönchengladbach":              "Borussia M'gladbach",
+    "FC Bayern München":            "Bayern Munich",
+    "Bayern München":               "Bayern Munich",
+    "Bayern Munchen":               "Bayern Munich",
+    "Bayern Munich":                "Bayern Munich",
+    "Bayer 04 Leverkusen":          "Bayer Leverkusen",
+    "Hamburger SV":                 "Hamburger SV",
+    "Borussia Dortmund":            "Borussia Dortmund",
+    "RB Leipzig":                   "RB Leipzig",
+    "VfB Stuttgart":                "VfB Stuttgart",
+    "SC Freiburg":                  "SC Freiburg",
+    "Eintracht Frankfurt":          "Eintracht Frankfurt",
+    "VfL Wolfsburg":                "VfL Wolfsburg",
+    "FC Augsburg":                  "FC Augsburg",
+    "SV Werder Bremen":             "Werder Bremen",
+    "Werder Bremen":                "Werder Bremen",
+    "1. FSV Mainz 05":              "1. FSV Mainz 05",
+    "FSV Mainz 05":                 "1. FSV Mainz 05",
+    "Mainz 05":                     "1. FSV Mainz 05",
+    "1. FC Heidenheim":             "1. FC Heidenheim",
+    "Heidenheim":                   "1. FC Heidenheim",
+    "1. FC Köln":                   "1. FC Köln",
+    "FC Köln":                      "1. FC Köln",
+    "Koln":                         "1. FC Köln",
+    "St. Pauli":                    "FC St. Pauli",
+    "FC St. Pauli":                 "FC St. Pauli",
+}
+
+def normalize_club_name(api_name: str) -> str:
+    """Convertit un nom API-Football vers le nom canonique CLUBS."""
+    return API_NAME_MAP.get(api_name, api_name)
+
+
+# ══════════════════════════════════════════════════════
+# TABLE DE CORRESPONDANCE : Noms API-Football → Clés CLUBS
+# API-Football utilise souvent les noms officiels allemands
+# ══════════════════════════════════════════════════════
+API_NAME_MAP = {
+    # Variantes API-Football → clé exacte dans CLUBS
+    "Bayern München":              "Bayern Munich",
+    "Bayern Munich":               "Bayern Munich",
+    "FC Bayern München":           "Bayern Munich",
+    "Borussia Dortmund":           "Borussia Dortmund",
+    "BV Borussia 09 Dortmund":     "Borussia Dortmund",
+    "Bayer Leverkusen":            "Bayer Leverkusen",
+    "Bayer 04 Leverkusen":         "Bayer Leverkusen",
+    "RB Leipzig":                  "RB Leipzig",
+    "Rasenballsport Leipzig":      "RB Leipzig",
+    "Eintracht Frankfurt":         "Eintracht Frankfurt",
+    "VfB Stuttgart":               "VfB Stuttgart",
+    "SC Freiburg":                 "SC Freiburg",
+    "Borussia Mönchengladbach":    "Borussia M'gladbach",
+    "Borussia Monchengladbach":    "Borussia M'gladbach",
+    "Borussia M'gladbach":         "Borussia M'gladbach",
+    "VfL Wolfsburg":               "VfL Wolfsburg",
+    "Wolfsburg":                   "VfL Wolfsburg",
+    "1899 Hoffenheim":             "Hoffenheim",
+    "TSG 1899 Hoffenheim":         "Hoffenheim",
+    "Hoffenheim":                  "Hoffenheim",
+    "Werder Bremen":               "Werder Bremen",
+    "SV Werder Bremen":            "Werder Bremen",
+    "1. FC Heidenheim":            "1. FC Heidenheim",
+    "FC Heidenheim":               "1. FC Heidenheim",
+    "Heidenheim":                  "1. FC Heidenheim",
+    "Union Berlin":                "1. FC Union Berlin",
+    "1. FC Union Berlin":          "1. FC Union Berlin",
+    "FC St. Pauli":                "FC St. Pauli",
+    "St. Pauli":                   "FC St. Pauli",
+    "1. FC Köln":                  "1. FC Köln",
+    "FC Köln":                     "1. FC Köln",
+    "Köln":                        "1. FC Köln",
+    "Hamburger SV":                "Hamburger SV",
+    "HSV":                         "Hamburger SV",
+    "FSV Mainz 05":                "1. FSV Mainz 05",
+    "1. FSV Mainz 05":             "1. FSV Mainz 05",
+    "Mainz":                       "1. FSV Mainz 05",
+    "Mainz 05":                    "1. FSV Mainz 05",
+    "FC Augsburg":                 "FC Augsburg",
+    "Augsburg":                    "FC Augsburg",
+}
+
+def normalize_club_name(api_name: str) -> str:
+    """Convertit un nom API-Football vers la clé exacte dans CLUBS."""
+    return API_NAME_MAP.get(api_name, api_name)

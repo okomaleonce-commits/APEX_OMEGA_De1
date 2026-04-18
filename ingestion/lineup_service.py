@@ -1,64 +1,93 @@
-"""APEX_OMEGA_De1 · Lineups & Injuries"""
+"""
+APEX_OMEGA_De1 · Lineups & Injuries — robuste, gère les variations API
+"""
+import logging
 import requests
 from config.settings import API_KEY
 from bundesliga.config_v2_3 import AIS_F, AIS_F_DEFAULT
 
-HDR = {"x-apisports-key": API_KEY}
-BASE= "https://v3.football.api-sports.io"
+logger = logging.getLogger(__name__)
+HDR  = {"x-apisports-key": API_KEY}
+BASE = "https://v3.football.api-sports.io"
 
-def get_injuries(team_id, fixture_id):
-    r = requests.get(f"{BASE}/injuries", headers=HDR, timeout=15,
-        params={"fixture":fixture_id,"team":team_id})
-    r.raise_for_status()
-    return r.json().get("response",[])
 
-def get_lineups(fixture_id):
-    r = requests.get(f"{BASE}/fixtures/lineups", headers=HDR, timeout=15,
-        params={"fixture":fixture_id})
-    r.raise_for_status()
-    return r.json().get("response",{})
+def get_injuries(team_id: int, fixture_id: int) -> list:
+    """
+    Retourne la liste des blessés/suspendus pour un match.
+    Gère les variations de format API-Football (dict ou liste dans 'player').
+    """
+    try:
+        r = requests.get(
+            f"{BASE}/injuries", headers=HDR, timeout=15,
+            params={"fixture": fixture_id, "team": team_id},
+        )
+        r.raise_for_status()
+        raw = r.json().get("response", [])
+        # Normaliser : s'assurer que chaque entrée est un dict avec "player" dict
+        return [_normalize_injury(e) for e in raw if isinstance(e, dict)]
+    except Exception as e:
+        logger.warning(f"get_injuries {team_id}/{fixture_id}: {e}")
+        return []
 
-def compute_ais_f(club_name, absent_players):
-    profile = AIS_F.get(club_name, {})
+
+def _normalize_injury(entry: dict) -> dict:
+    """Normalise une entrée injury — 'player' peut être dict ou liste."""
+    player = entry.get("player", {})
+    if isinstance(player, list):
+        player = player[0] if player else {}
+    return {
+        "player": player if isinstance(player, dict) else {},
+        "team":   entry.get("team", {}),
+        "reason": entry.get("reason", ""),
+    }
+
+
+def compute_ais_f(club_name: str, absent_players: list) -> dict:
+    """
+    Calcule le coefficient AIS-F composite pour une équipe.
+    Utilise le profil AIS_F du club si disponible, sinon valeurs par défaut.
+    Returns: {"att_mult": float, "def_mult": float}
+    """
+    # Support appel avec 3 args (club_name, absent_list, CLUBS) → ignorer 3e arg
+    profile  = AIS_F.get(club_name, {})
     att, deff = 1.0, 1.0
-    for p in absent_players:
-        imp = profile.get(p)
-        if imp:
-            att  *= (1 + imp.get("off", 0))
-            deff *= (1 + imp.get("def", 0))
-        # default Tier B
-    return {"att_mult": round(att,3), "def_mult": round(deff,3)}
+
+    for player_name in absent_players:
+        if not player_name:
+            continue
+        impact = profile.get(player_name)
+        if impact and isinstance(impact, dict):
+            att  *= (1 + impact.get("off", 0))
+            deff *= (1 + impact.get("def", 0))
+        # else: joueur non répertorié → impact négligeable
+
+    return {"att_mult": round(att, 3), "def_mult": round(deff, 3)}
 
 
-def count_absent_defenders(injuries: list[dict]) -> int:
-    """
-    Compte les défenseurs absents (blessés ou suspendus) dans une liste API-Football.
-    Returns: int
-    """
+def count_absent_defenders(injuries: list) -> int:
+    """Compte les défenseurs absents."""
     count = 0
     for entry in injuries:
+        if not isinstance(entry, dict):
+            continue
         player = entry.get("player", {})
-        pos    = player.get("type", "").lower()
-        reason = entry.get("reason", "").lower()
-        # API-Football type: "Defender" / raisons: "Injured", "Suspended"
+        if not isinstance(player, dict):
+            continue
+        pos = player.get("type", "").lower()
         if "defender" in pos or pos == "d":
-            if any(r in reason for r in ("injur", "suspend", "absent", "miss")):
-                count += 1
-            else:
-                count += 1  # absent quelle que soit la raison
+            count += 1
     return count
 
 
-def gk_is_experienced(injuries: list[dict], squad: list[dict] = None) -> bool:
-    """
-    Retourne True si le gardien titulaire est expérimenté (>50 matchs saison).
-    Retourne False si le GK est remplaçant ou junior (absent du squad connu).
-    En l'absence d'info, retourne True par défaut (conservateur).
-    """
-    # Si le GK numéro 1 est blessé/suspendu → False
+def gk_is_experienced(injuries: list) -> bool:
+    """Retourne False si le GK titulaire est absent (remplaçant inexpérimenté)."""
     for entry in injuries:
+        if not isinstance(entry, dict):
+            continue
         player = entry.get("player", {})
-        pos    = player.get("type", "").lower()
+        if not isinstance(player, dict):
+            continue
+        pos = player.get("type", "").lower()
         if "goalkeeper" in pos or pos == "g":
-            return False  # GK titulaire absent → remplaçant inexpérimenté
-    return True  # GK titulaire disponible
+            return False
+    return True

@@ -110,7 +110,7 @@ def get_fixture_result(fixture_id: int) -> dict:
     }
 
 
-def compute_win_rate(fixtures: list[dict], team_id: int, last: int = 8) -> float:
+def compute_win_rate(fixtures: list, team_id: int, last: int = 8) -> float:
     """
     Calcule le taux de victoire sur les N derniers matchs d'une équipe.
     Returns: float entre 0.0 et 1.0
@@ -118,15 +118,20 @@ def compute_win_rate(fixtures: list[dict], team_id: int, last: int = 8) -> float
     if not fixtures:
         return 0.40  # valeur par défaut Bundesliga
     wins = 0
-    for f in fixtures[-last:]:
-        teams = f.get("teams", {})
-        home  = teams.get("home", {})
-        away  = teams.get("away", {})
-        if home.get("id") == team_id and home.get("winner"):
+    valid = [f for f in fixtures[-last:] if isinstance(f, dict)]
+    if not valid:
+        return 0.40
+    for f in valid:
+        teams = f.get("teams") or {}
+        if not isinstance(teams, dict):
+            continue
+        home  = teams.get("home") or {}
+        away  = teams.get("away") or {}
+        if isinstance(home, dict) and home.get("id") == team_id and home.get("winner"):
             wins += 1
-        elif away.get("id") == team_id and away.get("winner"):
+        elif isinstance(away, dict) and away.get("id") == team_id and away.get("winner"):
             wins += 1
-    return round(wins / min(len(fixtures), last), 3)
+    return round(wins / len(valid), 3)
 
 
 def compute_h2h_avg_goals(h2h_fixtures: list[dict]) -> float:

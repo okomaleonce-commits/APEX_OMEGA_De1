@@ -1,8 +1,7 @@
 """
-APEX_OMEGA_De1 · Odds Service
-Source : The Odds API (https://the-odds-api.com)
-Remplace Betfair/Pinnacle directs — agrège plusieurs bookmakers
-Marchés : h2h (1X2) · totals (Over/Under) · btts
+APEX_OMEGA_De1 · Odds Service — The Odds API
+Plan gratuit : h2h + totals uniquement (btts non supporté)
+En cas d'erreur 401/403 : retourne dict vide (DCS baisse, NO BET probable)
 """
 import logging
 import requests
@@ -13,186 +12,155 @@ logger = logging.getLogger(__name__)
 BASE_URL  = "https://api.the-odds-api.com/v4"
 SPORT_KEY = "soccer_germany_bundesliga"
 
-# ── Correspondance marchés Odds API → APEX
-MARKET_MAP = {
-    "h2h":    ["1x2_home", "1x2_draw", "1x2_away"],
-    "totals":  ["over_25", "under_25", "over_35", "under_35"],
-    "btts":    ["btts_yes", "btts_no"],
-}
+# Bookmakers par priorité pour démarginisation
+PRIORITY  = ["pinnacle", "betfair_ex_eu", "unibet", "bet365", "williamhill"]
 
-def get_bundesliga_odds(fixture_date: str = None) -> list[dict]:
-    """
-    Récupère toutes les cotes Bundesliga disponibles sur The Odds API.
-    Retourne une liste de matchs avec cotes par bookmaker.
 
-    Args:
-        fixture_date : "YYYY-MM-DD" optionnel pour filtrer
-
-    Returns:
-        [{"home_team": str, "away_team": str, "commence_time": str,
-          "bookmakers": [...], "fair_odds": {...}}]
-    """
-    params = {
-        "apiKey":     ODDS_API_KEY,
-        "regions":    "eu",
-        "markets":    "h2h,totals,btts",
-        "oddsFormat": "decimal",
-        "bookmakers": ODDS_API_BOOKMAKERS,
-    }
-    if fixture_date:
-        params["commenceTimeTo"] = f"{fixture_date}T23:59:00Z"
-
+def get_bundesliga_odds() -> list:
+    """Récupère toutes les cotes Bundesliga. Retourne [] si erreur."""
     try:
         resp = requests.get(
             f"{BASE_URL}/sports/{SPORT_KEY}/odds",
-            params=params,
+            params={
+                "apiKey":     ODDS_API_KEY,
+                "regions":    "eu",
+                "markets":    "h2h,totals",   # btts retiré — non supporté plan gratuit
+                "oddsFormat": "decimal",
+            },
             timeout=20,
         )
         resp.raise_for_status()
         remaining = resp.headers.get("x-requests-remaining", "?")
-        logger.info(f"Odds API: {len(resp.json())} matchs · {remaining} requêtes restantes")
-
-        results = []
-        for event in resp.json():
-            fair = _extract_fair_odds(event)
-            results.append({
-                "event_id":      event.get("id"),
-                "home_team":     event.get("home_team"),
-                "away_team":     event.get("away_team"),
-                "commence_time": event.get("commence_time"),
-                "bookmakers":    event.get("bookmakers", []),
-                "fair_odds":     fair,
-            })
-        return results
-
-    except requests.RequestException as e:
-        logger.error(f"Odds API erreur: {e}")
+        data = resp.json()
+        logger.info(f"Odds API: {len(data)} matchs · {remaining} req restantes")
+        return data
+    except requests.HTTPError as e:
+        status = e.response.status_code if e.response else "?"
+        logger.warning(f"Odds API HTTP {status} — cotes indisponibles (mode dégradé)")
+        return []
+    except Exception as e:
+        logger.warning(f"Odds API erreur: {e} — mode dégradé")
         return []
 
 
 def get_match_odds(home_team: str, away_team: str) -> dict:
     """
-    Récupère les cotes pour un match spécifique.
-    Retourne un dict APEX-normalisé avec fair odds.
+    Cotes d'un match spécifique avec fair odds démarginalisés.
+    Retourne {} si indisponible (mode dégradé — DCS G4 pénalisé).
     """
-    all_odds = get_bundesliga_odds()
-    for event in all_odds:
-        h = event["home_team"].lower()
-        a = event["away_team"].lower()
-        if home_team.lower() in h and away_team.lower() in a:
-            return event["fair_odds"]
-    logger.warning(f"Cotes introuvables: {home_team} vs {away_team}")
+    all_events = get_bundesliga_odds()
+    ht_l = home_team.lower()
+    at_l = away_team.lower()
+
+    for event in all_events:
+        h = (event.get("home_team") or "").lower()
+        a = (event.get("away_team") or "").lower()
+        # Correspondance partielle pour gérer les variantes de noms
+        if _name_match(ht_l, h) and _name_match(at_l, a):
+            return _extract_fair_odds(event)
+
+    logger.debug(f"Cotes non trouvées: {home_team} vs {away_team}")
     return {}
 
 
+def build_fair_odds_dict(home_team: str, away_team: str) -> dict:
+    """Alias pipeline-compatible."""
+    return get_match_odds(home_team, away_team)
+
+
+def _name_match(name1: str, name2: str) -> bool:
+    """Correspondance partielle robuste entre noms de clubs."""
+    # Nettoyage accents/variantes courants
+    clean1 = _clean(name1)
+    clean2 = _clean(name2)
+    return clean1 in clean2 or clean2 in clean1 or clean1[:6] == clean2[:6]
+
+
+def _clean(name: str) -> str:
+    return (name.lower()
+            .replace("ü", "u").replace("ö", "o").replace("ä", "a")
+            .replace("ß", "ss").replace("fc ", "").replace("vfl ", "")
+            .replace("vfb ", "").replace("sc ", "").replace("rb ", "")
+            .replace("1. ", "").replace("fsv ", "").replace("sv ", "")
+            .replace("borussia ", "").replace("bayer ", "")
+            .strip())
+
+
 def _extract_fair_odds(event: dict) -> dict:
-    """
-    Extrait et démarginise les cotes depuis les bookmakers disponibles.
-    Priorité : Pinnacle > Betfair > autres
-    Retourne dict: {market_key: fair_odd}
-    """
-    # Collecte toutes les cotes par marché
+    """Extrait et démarginise les cotes depuis les bookmakers disponibles."""
     raw = {
         "1x2_home": [], "1x2_draw": [], "1x2_away": [],
-        "over_25": [], "under_25": [],
-        "over_35": [], "under_35": [],
-        "btts_yes": [], "btts_no": [],
+        "over_25": [],  "under_25": [],
+        "over_35": [],  "under_35": [],
     }
+    home_name = (event.get("home_team") or "").lower()
 
-    priority_order = ["pinnacle", "betfair_ex_eu", "unibet", "bet365", "williamhill"]
-    bookmakers_sorted = sorted(
+    bks = sorted(
         event.get("bookmakers", []),
-        key=lambda b: priority_order.index(b["key"])
-        if b["key"] in priority_order else 99,
+        key=lambda b: PRIORITY.index(b.get("key", ""))
+        if b.get("key", "") in PRIORITY else 99,
     )
 
-    for bk in bookmakers_sorted:
+    for bk in bks:
         for market in bk.get("markets", []):
-            key  = market["key"]
+            key  = market.get("key", "")
             outs = market.get("outcomes", [])
 
-            if key == "h2h" and len(outs) >= 2:
+            if key == "h2h":
                 for o in outs:
-                    name = o["name"].lower()
-                    if name == event["home_team"].lower():
+                    nm = (o.get("name") or "").lower()
+                    if _name_match(nm, home_name):
                         raw["1x2_home"].append(o["price"])
-                    elif name == "draw":
+                    elif nm in ("draw", "nul"):
                         raw["1x2_draw"].append(o["price"])
                     else:
                         raw["1x2_away"].append(o["price"])
 
             elif key == "totals":
                 for o in outs:
-                    pt = o.get("point", 0)
-                    nm = o["name"].lower()
+                    pt = float(o.get("point", 0) or 0)
+                    nm = (o.get("name") or "").lower()
                     if pt == 2.5:
-                        if nm == "over":  raw["over_25"].append(o["price"])
-                        else:             raw["under_25"].append(o["price"])
+                        raw["over_25" if nm == "over" else "under_25"].append(o["price"])
                     elif pt == 3.5:
-                        if nm == "over":  raw["over_35"].append(o["price"])
-                        else:             raw["under_35"].append(o["price"])
+                        raw["over_35" if nm == "over" else "under_35"].append(o["price"])
 
-            elif key in ("btts", "both_teams_to_score"):
-                for o in outs:
-                    nm = o["name"].lower()
-                    if nm in ("yes", "oui"):  raw["btts_yes"].append(o["price"])
-                    elif nm in ("no", "non"): raw["btts_no"].append(o["price"])
-
-    # Moyenne pondérée (top-3 bookmakers) + démarginisation
     fair = {}
-    for market_key, prices in raw.items():
+    for k, prices in raw.items():
         if prices:
-            avg = sum(prices[:3]) / len(prices[:3])  # top-3 bookmakers
-            fair[market_key] = round(avg, 3)
+            fair[k] = round(sum(prices[:3]) / len(prices[:3]), 3)
 
-    # Démarginisation sur le trio 1X2
+    # Démarginisation 1X2
     if all(k in fair for k in ("1x2_home", "1x2_draw", "1x2_away")):
-        trio = [fair["1x2_home"], fair["1x2_draw"], fair["1x2_away"]]
-        fair_trio = demarginalize(trio)
-        fair["1x2_home_fair"] = round(fair_trio[0], 3)
-        fair["1x2_draw_fair"] = round(fair_trio[1], 3)
-        fair["1x2_away_fair"] = round(fair_trio[2], 3)
+        trio = demarginalize([fair["1x2_home"], fair["1x2_draw"], fair["1x2_away"]])
+        fair["1x2_home_fair"] = trio[0]
+        fair["1x2_draw_fair"] = trio[1]
+        fair["1x2_away_fair"] = trio[2]
 
-    # Démarginisation Over/Under 2.5
-    for over_k, under_k in [("over_25", "under_25"), ("over_35", "under_35")]:
-        if over_k in fair and under_k in fair:
-            pair = [fair[over_k], fair[under_k]]
-            fp   = demarginalize(pair)
-            fair[f"{over_k}_fair"]  = round(fp[0], 3)
-            fair[f"{under_k}_fair"] = round(fp[1], 3)
+    # Démarginisation Over/Under
+    for ok, uk in [("over_25", "under_25"), ("over_35", "under_35")]:
+        if ok in fair and uk in fair:
+            pair = demarginalize([fair[ok], fair[uk]])
+            fair[f"{ok}_fair"] = pair[0]
+            fair[f"{uk}_fair"] = pair[1]
 
     return fair
 
 
-def demarginalize(odds: list[float]) -> list[float]:
-    """
-    Démarginisation Shin approximée.
-    Retourne les fair odds sans marge bookmaker.
-    """
+def demarginalize(odds: list) -> list:
+    """Shin demarginalization — supprime la marge bookmaker."""
     if not odds or any(o <= 1.0 for o in odds):
         return odds
     implied = [1 / o for o in odds]
     total   = sum(implied)
     margin  = total - 1.0
-    fair_implied = [p - margin * (p ** 2 / total) for p in implied]
-    # Éviter division par zéro
-    return [round(1 / max(p, 0.001), 3) for p in fair_implied]
+    fair_p  = [p - margin * (p ** 2 / total) for p in implied]
+    return [round(1 / max(p, 0.001), 3) for p in fair_p]
 
 
 def compute_edge(model_prob: float, fair_odd: float) -> float:
-    """
-    Edge value betting : (P_modèle - P_marché_fair) / P_marché_fair
-    Valeur positive = value bet détecté.
-    """
+    """edge = (P_modèle - P_marché_fair) / P_marché_fair"""
     if fair_odd <= 1.0:
         return 0.0
     market_prob = 1 / fair_odd
     return round((model_prob - market_prob) / market_prob, 4)
-
-
-def build_fair_odds_dict(home_team: str, away_team: str) -> dict:
-    """
-    Wrapper pipeline-compatible : retourne le dict fair_odds pour un match.
-    Utilisé par pipeline.py directement.
-    """
-    return get_match_odds(home_team, away_team)
