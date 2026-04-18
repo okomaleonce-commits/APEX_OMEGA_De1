@@ -209,8 +209,15 @@ class ApexBundesligaPipeline:
         gates_dict = {
             "forbidden_markets": ctx.forbidden_markets,
             "kelly_mult":        ctx.kelly_mult,
-            "flags":             {f: True for f in ctx.active_flags},
-            "warnings":          ctx.warnings,
+            "flags": {
+                **{f: True for f in ctx.active_flags},
+                # Win rates pour is_1x2_form_ok (VerdictEngine)
+                "home_win_rate_effective": match.get("home_win_rate_8m", 0.4),
+                "away_win_rate_effective": match.get("away_win_rate_8m", 0.4),
+                "1x2_home_form_ok": match.get("home_win_rate_8m", 0.4) >= 0.40,
+                "1x2_away_form_ok": match.get("away_win_rate_8m", 0.4) >= 0.40,
+            },
+            "warnings": ctx.warnings,
         }
         signals = self.verdict.generate(match, probs, dcs, gates_dict, session)
 

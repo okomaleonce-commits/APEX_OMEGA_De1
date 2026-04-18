@@ -64,7 +64,7 @@ def build_pre_match_report(
         "",
         "📊 *MODÈLE POISSON :*",
         f"  home\\_xg = `{probs['home_xg']}`  |  away\\_xg = `{probs['away_xg']}`",
-        f"  Ratio = `{probs['ratio_xg']}`  ·  Dom.Factor = `{probs['dominance_factor']}`",
+        f"  Ratio = `{probs['ratio_xg']}`  ·  Dom.Factor = `{probs.get('dom_factor', probs.get('dominance_factor', 1.0))}`",
     ]
 
     # Probabilités
