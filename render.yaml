@@ -1,49 +1,78 @@
-# APEX_OMEGA_De1 · Render Deployment Config
-# Bundesliga-Only Bot — Persistent Disk
+# ═══════════════════════════════════════════════════════
+#  APEX-OMEGA De1 Bot — Configuration Render
+#  https://render.com/docs/render-yaml
+# ═══════════════════════════════════════════════════════
 
 services:
-  - type: worker
-    name: apex-omega-bundesliga
-    runtime: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
-    envVars:
-      - key: TELEGRAM_BOT_TOKEN
-        sync: false
-      - key: TELEGRAM_CHANNEL_ID
-        sync: false
-      - key: API_FOOTBALL_KEY
-        sync: false
-      - key: BETFAIR_APP_KEY
-        sync: false
-      - key: BETFAIR_SESSION_TOKEN
-        sync: false
-      - key: PINNACLE_API_KEY
-        sync: false
-      - key: FOOTYSTATS_KEY
-        sync: false
-      - key: DATA_DIR
-        value: /data
-      - key: SEASON
-        value: "2025"
-      - key: DEBUG
-        value: "false"
-    disk:
-      name: apex-bundesliga-data
-      mountPath: /data
-      sizeGB: 1
 
-# Cron Jobs dédiés Bundesliga
-# Note: Render supporte les crons sur les Web Services uniquement
-# Pour worker, utiliser APScheduler intégré dans main.py
-# Ces crons sont conservés pour référence / migration future
+  # ── Bot principal (Worker — tourne en continu)
+  - type:         worker
+    name:         apex-omega-bundesliga
+    runtime:      python
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: python main.py
+    plan:         starter          # starter = $7/mois (ou free pour test)
+
+    envVars:
+      # ── Telegram
+      - key:   TELEGRAM_BOT_TOKEN
+        sync:  false              # à saisir manuellement dans Render dashboard
+      - key:   TELEGRAM_CHANNEL_ID
+        sync:  false
+
+      # ── APIs données
+      - key:   API_FOOTBALL_KEY
+        sync:  false
+      - key:   BETFAIR_APP_KEY
+        sync:  false
+      - key:   BETFAIR_SESSION_TOKEN
+        sync:  false
+      - key:   PINNACLE_API_KEY
+        sync:  false
+      - key:   FOOTYSTATS_KEY
+        sync:  false
+      - key:   FBREF_API_KEY
+        sync:  false
+      - key:   OPTA_API_KEY
+        sync:  false
+
+      # ── Runtime
+      - key:   DATA_DIR
+        value: /data
+      - key:   BUNDESLIGA_SEASON
+        value: "2025"
+      - key:   PORT
+        value: "10000"
+      - key:   DEBUG
+        value: "false"
+      - key:   LOG_LEVEL
+        value: "INFO"
+      - key:   SCAN_HOUR_UTC
+        value: "7"
+      - key:   ODDS_REFRESH_HOURS
+        value: "2"
+      - key:   AUDIT_HOUR_UTC
+        value: "2"
+      - key:   PRE_MATCH_HOURS
+        value: "2"
+
+    # ── Disque persistant (signaux + audits)
+    disk:
+      name:      bundesliga-data
+      mountPath: /data
+      sizeGB:    1
+
+# ── Cron Jobs séparés (Render Cron Service)
+# Note : les crons Render nécessitent un plan payant (Starter+)
+# Alternative : APScheduler intégré dans main.py (déjà configuré)
+
+# Décommenter si tu veux des crons Render natifs :
 #
 # crons:
-#   - name: apex-ingestion-bl
-#     schedule: "0 6 * * 2,5"     # Mardi + Vendredi 06h00 UTC
+#   - name:     apex-ingestion
+#     schedule: "0 6 * * 2,5"        # Mardi + Vendredi 06:00 UTC
+#     command:  python -c "import asyncio; from pipeline import ApexBundesligaPipeline; p = ApexBundesligaPipeline(); asyncio.run(p.daily_scan())"
 #
-#   - name: apex-analyse-bl
-#     schedule: "30 9 * * 2,5"    # Mardi + Vendredi 09h30 UTC
-#
-#   - name: apex-audit-bl
-#     schedule: "0 23 * * 0"      # Dimanche 23h00 UTC
+#   - name:     apex-audit
+#     schedule: "0 2 * * *"           # Chaque nuit 02:00 UTC
+#     command:  python -c "import asyncio; from pipeline import ApexBundesligaPipeline; p = ApexBundesligaPipeline(); asyncio.run(p.run_audit())"
