@@ -265,11 +265,9 @@ def get_current_round() -> str | None:
 
 def get_upcoming_fixtures_robust(days_ahead: int = 7) -> list:
     """
-    Version robuste qui essaie toutes les stratégies dans l'ordre :
-    1. Cache local (TTL 2h) — protège quota 100 req/jour
-    2. next=50 (plan payant API-Football)
-    3. round actuel + suivant (fonctionne sur tous les plans)
-    4. from/to sans status
+    Récupère les prochains matchs Bundesliga.
+    Cache 2h pour économiser le quota (100 req/jour plan gratuit).
+    Stratégies : from/to (J+0 à J+N) sans filtre status.
     """
     cache_key = f"fixtures_{days_ahead}j"
     cached = get_cached(cache_key)
@@ -277,65 +275,72 @@ def get_upcoming_fixtures_robust(days_ahead: int = 7) -> list:
         return cached
 
     now    = datetime.utcnow()
-    cutoff = now.timestamp() + days_ahead * 86400
     season = get_active_season()
+    results = []
 
-    # Stratégie 1 : next=50
-    try:
-        r = requests.get(f"{BASE_URL}/fixtures", headers=HEADERS, timeout=15,
-            params={"league": BUNDESLIGA_API_ID, "season": season, "next": 50})
-        r.raise_for_status()
-        data = r.json().get("response", [])
-        if data:
-            filtered = [fx for fx in data
-                       if (fx.get("fixture",{}).get("timestamp") or 0) <= cutoff]
-            logger.info(f"Stratégie next=50: {len(filtered)} fixtures")
-            if filtered:
-                set_cache(cache_key, filtered)
-                return filtered
-    except Exception as e:
-        logger.debug(f"next=50 failed: {e}")
+    # Stratégie A : from=aujourd'hui to=J+N sans filtre status
+    # Filtre côté client : timestamp > maintenant
+    for delta_start in [0, 1]:  # essayer depuis aujourd'hui, puis depuis demain
+        try:
+            date_from = (now.date() + timedelta(days=delta_start))
+            date_to   = now.date() + timedelta(days=days_ahead)
+            r = requests.get(
+                f"{BASE_URL}/fixtures", headers=HEADERS, timeout=15,
+                params={
+                    "league":  BUNDESLIGA_API_ID,
+                    "season":  season,
+                    "from":    str(date_from),
+                    "to":      str(date_to),
+                },
+            )
+            r.raise_for_status()
+            raw = r.json()
 
-    # Stratégie 2 : round actuel + round suivant
-    try:
-        current_round = get_current_round()
-        if current_round:
-            # Extraire le numéro de journée
-            num = int(current_round.split(" - ")[-1])
-            rounds_to_check = [
-                f"Regular Season - {num}",
-                f"Regular Season - {num + 1}",
+            # Vérifier les erreurs API (rate limit etc.)
+            errors = raw.get("errors", {})
+            if errors and errors != [] and errors != {}:
+                logger.warning(f"API-Football erreur: {errors}")
+                break
+
+            all_fx = raw.get("response", [])
+            # Garder seulement les matchs dont le KO est dans le futur
+            upcoming = [
+                fx for fx in all_fx
+                if (fx.get("fixture", {}).get("timestamp") or 0) > now.timestamp()
             ]
-            all_fx = []
-            for rnd in rounds_to_check:
-                fx_list = get_fixtures_by_round(rnd, season)
-                all_fx.extend(fx_list)
-
-            upcoming = [fx for fx in all_fx
-                       if (fx.get("fixture",{}).get("timestamp") or 0) > now.timestamp()
-                       and (fx.get("fixture",{}).get("timestamp") or 0) <= cutoff]
-            logger.info(f"Stratégie round {current_round}: {len(upcoming)} fixtures")
+            logger.info(
+                f"API-Football from={date_from} to={date_to}: "
+                f"{len(upcoming)}/{len(all_fx)} fixtures à venir"
+            )
             if upcoming:
-                set_cache(cache_key, upcoming)
-                return upcoming
-    except Exception as e:
-        logger.debug(f"round strategy failed: {e}")
+                results = upcoming
+                break
+        except Exception as e:
+            logger.warning(f"Stratégie from/to delta={delta_start}: {e}")
+            continue
 
-    # Stratégie 3 : from/to (fallback ultime)
-    try:
-        today = now.date()
-        to    = today + timedelta(days=days_ahead)
-        r = requests.get(f"{BASE_URL}/fixtures", headers=HEADERS, timeout=15,
-            params={"league": BUNDESLIGA_API_ID, "season": season,
-                    "from": str(today), "to": str(to)})
-        r.raise_for_status()
-        all_data = r.json().get("response", [])
-        upcoming = [fx for fx in all_data
-                   if (fx.get("fixture",{}).get("timestamp") or 0) > now.timestamp()]
-        logger.info(f"Stratégie from/to: {len(upcoming)}/{len(all_data)} fixtures")
-        if upcoming:
-            set_cache(cache_key, upcoming)
-        return upcoming
-    except Exception as e:
-        logger.error(f"Toutes stratégies échouées: {e}")
-        return []
+    # Stratégie B : round actuel (si A vide)
+    if not results:
+        try:
+            current_round = get_current_round()
+            if current_round:
+                num = int(current_round.split(" - ")[-1])
+                for n in [num, num + 1]:
+                    rnd = f"Regular Season - {n}"
+                    fx_list = get_fixtures_by_round(rnd, season)
+                    for fx in fx_list:
+                        ts = fx.get("fixture", {}).get("timestamp") or 0
+                        if ts > now.timestamp():
+                            results.append(fx)
+                logger.info(f"Stratégie round: {len(results)} fixtures")
+        except Exception as e:
+            logger.warning(f"Stratégie round: {e}")
+
+    if results:
+        set_cache(cache_key, results)
+    else:
+        logger.warning("get_upcoming_fixtures_robust: 0 fixtures — quota épuisé ou hors saison?")
+
+    return results
+
+

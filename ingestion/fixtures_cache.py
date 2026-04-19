@@ -27,9 +27,13 @@ def get_cached(key: str) -> list | None:
         data = json.loads(path.read_text())
         cached_at = datetime.fromisoformat(data["cached_at"])
         if datetime.utcnow() - cached_at < timedelta(hours=CACHE_TTL_HOURS):
-            logger.info(f"Cache HIT [{key}] — {len(data['fixtures'])} fixtures "
+            fixtures = data.get('fixtures', [])
+            if not fixtures:  # Ne jamais retourner [] depuis le cache
+                logger.info(f"Cache vide [{key}] — forçage appel API")
+                return None
+            logger.info(f"Cache HIT [{key}] — {len(fixtures)} fixtures "
                         f"(cached {cached_at.strftime('%H:%M')} UTC)")
-            return data["fixtures"]
+            return fixtures
         logger.info(f"Cache EXPIRED [{key}]")
         return None
     except Exception:

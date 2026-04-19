@@ -313,3 +313,34 @@ async def debug_round():
                 ]
             }
     return JSONResponse(result)
+
+
+@app.get("/cache/clear")
+async def clear_cache():
+    """Vide le cache fixtures (forcer appel API au prochain /scan)."""
+    try:
+        from ingestion.fixtures_cache import clear_cache as _clear
+        _clear()
+        return JSONResponse({"status": "cache vidé"})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/cache/status")
+async def cache_status():
+    """Affiche le contenu actuel du cache."""
+    from config.settings import BASE_DATA_DIR
+    cache_dir = BASE_DATA_DIR / "cache"
+    import json
+    files = {}
+    if cache_dir.exists():
+        for f in cache_dir.glob("*.json"):
+            try:
+                data = json.loads(f.read_text())
+                files[f.stem] = {
+                    "cached_at": data.get("cached_at"),
+                    "count": len(data.get("fixtures", [])),
+                }
+            except Exception:
+                files[f.stem] = "corrupt"
+    return JSONResponse({"cache_files": files, "cache_dir": str(cache_dir)})
