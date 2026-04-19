@@ -193,7 +193,21 @@ class ApexBundesligaPipeline:
         )
 
         if dcs["tier"] == "INSUFFICIENT":
-            logger.info(f"NO BET DCS [{home} vs {away}]: {dcs['adjusted']}/70")
+            logger.info(f"DCS INSUFFISANT [{home} vs {away}]: {dcs['adjusted']}/70")
+            await send_analysis(
+                f"⚽ *APEX-BUNDESLIGA — J{md}*
+"
+                f"*{home}* vs *{away}*
+
+"
+                f"🔕 *DCS {dcs['adjusted']}/70 — DONNÉES INSUFFISANTES*
+"
+                f"Analyse impossible — données incomplètes pour ce match.
+"
+                f"_Signal émis sur estimation :_
+"
+                + _build_dcs_fallback(match, dcs, md)
+            )
             return []
 
         # ── 6. Poisson → xG calibrés → ALL 40+ marchés ─────────

@@ -117,7 +117,7 @@ async def _run_scan(update: Update, days: float, label: str) -> None:
             logger.error(f"Analyse échouée: {e}")
             passes += 1
 
-    total_exp = session["total_exposure"]
+    total_exp = sum(s.get("stake_pct", 0) for s in all_signals)  # recalcul réel
     await _reply(update,
         f"✅ <b>Scan terminé — {h(label)}</b>\n\n"
         f"📊 Matchs analysés : <b>{len(in_window)}</b>\n"
